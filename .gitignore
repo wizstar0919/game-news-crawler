@@ -18,6 +18,10 @@ _*.txt
 articles.json.tmp
 _test_articles.json
 
+# 사용자별 북마크 — 코드(사용자 식별자)와 개인 관심 기사가 들어가므로 커밋하지 않는다
+user_bookmarks.json
+user_bookmarks.json.tmp
+
 # IDE
 .vscode/
 .idea/

@@ -14,7 +14,8 @@
 - **누적 저장(JSON)** — 수집한 기사를 `articles.json`에 link 기준으로 누적 → 피드에서 밀려나도 사라지지 않음
 - **실제 작성일 파싱** — RSS published 날짜 + HTML 매체는 상세 페이지에서 작성일 추출(JSON-LD/meta/`<time>`)
 - **5일 보존** — 수집 후 5일이 지난 기사는 자동 삭제 (수집 시각 기준)
-- **북마크** — 북마크한 기사는 5일이 지나도 영구 보존, 북마크 필터 제공
+- **사용자별 북마크** — "내 코드"(별명)를 입력하면 코드별로 북마크가 분리 저장됨. 다른 기기에서 같은 코드를 넣으면 북마크가 따라옴. 누군가 북마크한 기사는 5일이 지나도 보존, 북마크 필터 제공
+- **게임사 규모 필터** — 대형/중형/소형 게임사로 나눠 보기 (`crawler.py:COMPANY_TIERS` 기준)
 - **10분 캐시** — 외부 사이트 부하 최소화 (새로고침 버튼은 항상 재크롤)
 
 ## 수집 소스
@@ -55,7 +56,8 @@ python app.py
 - `GET /api/news` — JSON 응답 (쿼리: `?category=...&source=...&sort=...`)
 - `GET /api/refresh` — 캐시 무효화 후 재크롤
 - `POST /api/translate` — `{title, summary}` 한국어 번역
-- `POST /api/bookmark` — `{link, bookmarked}` 북마크 토글 (보존 대상 지정)
+- `GET /api/bookmarks?code=...` — 해당 코드(사용자)의 북마크 link 목록
+- `POST /api/bookmark` — `{code, link, bookmarked}` 사용자별 북마크 토글
 
 ## 프로젝트 구조
 
@@ -63,9 +65,10 @@ python app.py
 game-news-crawler/
 ├── app.py              # Flask 라우트 (북마크 API 포함)
 ├── crawler.py          # 크롤러 + 작성일 파싱 + e스포츠 필터 + 기업 티어 + 정렬
-├── store.py            # JSON 누적 저장 + 5일 보존 + 북마크
+├── store.py            # JSON 누적 저장 + 5일 보존 + 사용자별 북마크
 ├── translator.py       # 번역 + 디스크 캐시
 ├── articles.json       # 누적 저장된 기사 (GitHub 함께 커밋)
+├── user_bookmarks.json # 코드별 북마크 (자동 생성, .gitignore — 커밋 안 함)
 ├── requirements.txt
 ├── templates/
 │   └── index.html      # 카드 그리드 + 모달 UI + 북마크

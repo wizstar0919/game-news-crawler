@@ -71,6 +71,22 @@ body {
 }
 .btn-refresh:hover { opacity: 0.85; }
 .btn-refresh:disabled { opacity: 0.5; cursor: wait; }
+.btn-user {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+.btn-user:hover { border-color: var(--accent); color: var(--accent); }
 
 /* Filter bar */
 .filter-bar {
@@ -175,6 +191,15 @@ body {
 }
 .tier-1 { background: #fee2e2; color: #b91c1c; }
 .tier-2 { background: #fef3c7; color: #92400e; }
+.tier-3 { background: #e4e4e7; color: #52525b; }
+
+/* 게임사 규모 필터 칩 — 카테고리 칩과 구분되도록 활성 색을 파란색으로 */
+.chip-size.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.chip-size.active span { background: rgba(255, 255, 255, 0.2); color: white; }
 .card-image {
   height: 180px;
   background-size: cover;
