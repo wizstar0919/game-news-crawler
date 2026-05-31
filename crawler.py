@@ -1,0 +1,441 @@
+import feedparser
+import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import re
+
+SOURCES = {
+    "global": [
+        {"name": "GameSpot", "url": "https://www.gamespot.com/feeds/mashup/", "category": "global"},
+        {"name": "IGN", "url": "https://feeds.feedburner.com/ign/all", "category": "global"},
+        {"name": "Polygon", "url": "https://www.polygon.com/rss/index.xml", "category": "global"},
+        {"name": "Kotaku", "url": "https://kotaku.com/rss", "category": "global"},
+        {"name": "Eurogamer", "url": "https://www.eurogamer.net/feed", "category": "global"},
+    ],
+    "korea": [
+        {"name": "GameMeca", "url": "https://www.gamemeca.com/rss.php", "category": "korea"},
+    ],
+    "media": [
+        {"name": "PNN", "url": "https://www.ipnn.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "게임어바웃", "url": "https://www.gameabout.com/rss/allArticle.xml", "category": "media"},
+        {"name": "게임톡", "url": "https://www.gametoc.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "게임뷰", "url": "https://www.gamevu.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "게임인사이트", "url": "https://www.gameinsight.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "게임플", "url": "https://www.gameple.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "경향게임스", "url": "https://www.khgames.co.kr/rss/allArticle.xml", "category": "media"},
+        {"name": "뉴스앤게임(ZDNet)", "url": "https://zdnet.co.kr/feed", "category": "media"},
+    ],
+    "aws": [
+        {"name": "AWS Game Tech Blog", "url": "https://aws.amazon.com/blogs/gametech/feed/", "category": "aws"},
+        {"name": "AWS News Blog", "url": "https://aws.amazon.com/blogs/aws/feed/", "category": "aws"},
+    ],
+}
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+ESPORTS_KEYWORDS = [
+    "e스포츠", "이스포츠", "esports", "e-sports", "esport",
+    " LCK", " LPL", " LEC", " LCS", " LJL", " LLA", " VCT",
+    " ASL", " PMPS", " MSI", "EWC", "월드 챔피언십", "월즈",
+    "프로게이머", "프로 게이머", "프로팀",
+    "[포토]", "[ASL]", "[LCK]", "[LCS]",
+    "젠지", "Gen.G", "한화생명e", "농심 레드포스", "kt 롤스터", "디플러스",
+    "페이커", "구마유시", "데프트", "쇼메이커", "쵸비", "캐니언",
+    "발로란트", "Valorant", "오버워치 리그", "Dota 2", "도타 2",
+]
+
+COMPANY_TIERS = {
+    1: [
+        "넥슨", "Nexon", "엔씨소프트", "엔씨", "NCSOFT", "NCSoft", "NC ",
+        "크래프톤", "Krafton", "넷마블", "Netmarble",
+        "카카오게임즈", "Kakao Games", "펄어비스", "Pearl Abyss",
+        "스마일게이트", "Smilegate",
+        "Nintendo", "닌텐도", "Sony", "소니", "Microsoft", "마이크로소프트",
+        "Activision", "Blizzard", "블리자드", "EA", "Electronic Arts",
+        "Ubisoft", "유비소프트", "Take-Two", "Rockstar",
+        "Tencent", "텐센트", "Epic Games", "에픽게임즈",
+        "Valve", "밸브", "Steam", "스팀", "Riot", "라이엇",
+    ],
+    2: [
+        "컴투스", "Com2uS", "위메이드", "Wemade",
+        "데브시스터즈", "Devsisters", "웹젠", "Webzen",
+        "네오위즈", "Neowiz", "NHN", "그라비티", "Gravity",
+        "라인게임즈", "시프트업", "Shift Up",
+        "miHoYo", "미호요", "HoYoverse", "호요버스",
+        "Capcom", "캡콤", "Square Enix", "스퀘어에닉스",
+        "Bandai Namco", "반다이남코", "Konami", "코나미",
+        "CD Projekt", "Bethesda", "베데스다", "2K",
+        "카카오", "Kakao",
+    ],
+}
+
+
+def _company_tier(text: str) -> int:
+    if not text:
+        return 3
+    for tier in (1, 2):
+        for kw in COMPANY_TIERS[tier]:
+            if kw in text:
+                return tier
+    return 3
+
+
+def _is_esports(text: str) -> bool:
+    if not text:
+        return False
+    low = text.lower()
+    for kw in ESPORTS_KEYWORDS:
+        if kw.startswith(" "):
+            if kw.lower() in (" " + low):
+                return True
+        elif kw.lower() in low:
+            return True
+    return False
+
+_cache = {"data": [], "ts": 0}
+CACHE_TTL = 600
+
+HTML_OUTLETS = [
+    {
+        "name": "게임동아",
+        "list_url": "https://game.donga.com/",
+        "article_re": r"^(?://|https?://)game\.donga\.com/(\d+)/?$",
+        "link_base": "https://",
+    },
+    {
+        "name": "매경게임진",
+        "list_url": "https://game.mk.co.kr/",
+        "article_re": r"^(?:https?://game\.mk\.co\.kr)?/news/it/(\d+)$",
+        "link_base": "https://game.mk.co.kr",
+    },
+    {
+        "name": "데일리게임",
+        "list_url": "https://www.dailygame.co.kr/",
+        "article_re": r"view\.php\?ud=([^&\"'\s]+)",
+        "link_base": "https://www.dailygame.co.kr",
+    },
+    {
+        "name": "게임포커스",
+        "list_url": "http://www.gamefocus.co.kr/",
+        "article_re": r"detail\.php\?number=(\d+)$",
+        "link_base": "http://www.gamefocus.co.kr",
+    },
+]
+
+
+def _clean_html(raw_html: str) -> str:
+    if not raw_html:
+        return ""
+    text = BeautifulSoup(raw_html, "html.parser").get_text(separator=" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+    return text[:280] + ("…" if len(text) > 280 else "")
+
+
+def _extract_image(entry) -> str | None:
+    if "media_thumbnail" in entry and entry.media_thumbnail:
+        return entry.media_thumbnail[0].get("url")
+    if "media_content" in entry and entry.media_content:
+        return entry.media_content[0].get("url")
+    if "links" in entry:
+        for link in entry.links:
+            if link.get("type", "").startswith("image"):
+                return link.get("href")
+    summary = entry.get("summary", "") or entry.get("description", "")
+    if summary:
+        m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', summary)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _parse_date(entry) -> datetime:
+    for key in ("published_parsed", "updated_parsed"):
+        val = entry.get(key)
+        if val:
+            try:
+                return datetime(*val[:6])
+            except Exception:
+                continue
+    return datetime.now()
+
+
+def _is_game_related(text: str) -> bool:
+    keywords = [
+        "game", "gaming", "games", "gamer", "esport", "unity", "unreal",
+        "playstation", "xbox", "nintendo", "steam", "studio", "developer",
+        "lumberyard", "open 3d", "o3de", "graviton",
+    ]
+    text_lower = text.lower()
+    return any(k in text_lower for k in keywords)
+
+
+def fetch_one(source: dict) -> list:
+    items = []
+    try:
+        resp = requests.get(source["url"], headers=HEADERS, timeout=10)
+        resp.raise_for_status()
+        feed = feedparser.parse(resp.content)
+        for entry in feed.entries[:20]:
+            title = entry.get("title", "").strip()
+            link = entry.get("link", "")
+            if not title or not link:
+                continue
+
+            summary_raw = entry.get("summary", "") or entry.get("description", "")
+            summary = _clean_html(summary_raw)
+
+            blob = f"{title} {summary}"
+
+            if source["name"] == "AWS News Blog":
+                if not _is_game_related(blob):
+                    continue
+
+            if _is_esports(blob):
+                continue
+
+            items.append({
+                "title": title,
+                "link": link,
+                "summary": summary,
+                "image": _extract_image(entry),
+                "date": _parse_date(entry).isoformat(),
+                "source": source["name"],
+                "category": source["category"],
+                "tier": _company_tier(blob),
+            })
+    except Exception as e:
+        print(f"[crawler] {source['name']} failed: {e}")
+    return items
+
+
+def _resolve_link(href: str, link_base: str) -> str:
+    if href.startswith("//"):
+        return "https:" + href
+    if href.startswith("/"):
+        return link_base + href
+    if not href.startswith("http"):
+        return link_base.rstrip("/") + "/" + href
+    return href
+
+
+def fetch_html_outlet(outlet: dict) -> list:
+    items: list = []
+    try:
+        r = requests.get(outlet["list_url"], headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        text = r.content.decode(r.encoding or "utf-8", errors="replace")
+        soup = BeautifulSoup(text, "html.parser")
+        article_re = re.compile(outlet["article_re"])
+
+        url_to_anchors: dict = {}
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            m = article_re.search(href)
+            if not m:
+                continue
+            txt = a.get_text(strip=True)
+            if not txt or len(txt) < 8:
+                continue
+            key = m.group(0)
+            if key not in url_to_anchors:
+                url_to_anchors[key] = {"href": href, "texts": []}
+            if txt not in url_to_anchors[key]["texts"]:
+                url_to_anchors[key]["texts"].append(txt)
+
+        for key, data in url_to_anchors.items():
+            texts = data["texts"]
+            title_candidates = [t for t in texts if len(t) <= 120]
+            if title_candidates:
+                title = min(title_candidates, key=len)
+            else:
+                shortest = min(texts, key=len)
+                title = shortest[:80].rstrip() + "…"
+
+            longer = [t for t in texts if len(t) > len(title) + 10]
+            summary = max(longer, key=len)[:220] if longer else ""
+
+            blob = f"{title} {summary}"
+            if _is_esports(blob):
+                continue
+
+            items.append({
+                "title": title,
+                "link": _resolve_link(data["href"], outlet["link_base"]),
+                "summary": summary,
+                "image": None,
+                "date": datetime.now().isoformat(),
+                "source": outlet["name"],
+                "category": "media",
+                "tier": _company_tier(blob),
+            })
+            if len(items) >= 20:
+                break
+    except Exception as e:
+        print(f"[html outlet] {outlet['name']} failed: {e}")
+    return items
+
+
+def _parse_kgma_listing(html: str) -> list:
+    soup = BeautifulSoup(html, "html.parser")
+    items: list = []
+    seen = set()
+    for a in soup.find_all("a", href=re.compile(r"cd=g0201.*cm=v.*ud=(\d+)")):
+        m = re.search(r"ud=(\d+)", a["href"])
+        if not m:
+            continue
+        ud = m.group(1)
+        if ud in seen:
+            continue
+        seen.add(ud)
+        # walk up to find a container with enough text
+        container = a
+        for _ in range(6):
+            if container is None:
+                break
+            txts = [t.strip() for t in container.stripped_strings if t.strip()]
+            if len(txts) >= 2 and any(len(t) > 15 for t in txts):
+                break
+            container = container.parent
+        if container is None:
+            continue
+        # Extract this single item's data — find the closest text block
+        # The pattern is: name (short), description (long), "자세히보기"
+        all_texts = [t.strip() for t in container.stripped_strings if t.strip()]
+        # find this item's segment by clipping around it
+        # de-dupe by taking each unique text block
+        name, desc = None, None
+        for i, t in enumerate(all_texts):
+            if t == "자세히보기" and i >= 2:
+                desc = all_texts[i - 1]
+                name = all_texts[i - 2]
+                break
+        if not name:
+            continue
+        img = a.find("img") or container.find("img")
+        img_src = img.get("src") if img else None
+        items.append({
+            "ud": ud,
+            "name": name,
+            "desc": desc or "",
+            "image": img_src,
+            "detail_url": KGMA_BASE + "/" + a["href"].lstrip("/"),
+        })
+    return items
+
+
+def _fetch_kgma_homepage(detail_url: str) -> str | None:
+    try:
+        r = requests.get(detail_url, headers=HEADERS, timeout=8)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if href.startswith("http") and "k-gma.com" not in href:
+                return href
+    except Exception as e:
+        print(f"[kgma detail] {detail_url} failed: {e}")
+    return None
+
+
+def fetch_kgma(force: bool = False) -> list:
+    now = time.time()
+    if not force and _kgma_cache["data"] and (now - _kgma_cache["ts"] < KGMA_CACHE_TTL):
+        return _kgma_cache["data"]
+
+    raw_items: list = []
+    for pg in range(1, 6):
+        url = f"{KGMA_BASE}/subsection.php?cd=g0201&sn=&pg={pg}"
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=10)
+            r.raise_for_status()
+            page_items = _parse_kgma_listing(r.text)
+            if not page_items:
+                break
+            existing = {i["ud"] for i in raw_items}
+            new_items = [i for i in page_items if i["ud"] not in existing]
+            if not new_items:
+                break
+            raw_items.extend(new_items)
+        except Exception as e:
+            print(f"[kgma list pg={pg}] failed: {e}")
+            break
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {ex.submit(_fetch_kgma_homepage, it["detail_url"]): it for it in raw_items}
+        for f in as_completed(futures):
+            it = futures[f]
+            it["homepage"] = f.result()
+
+    items = []
+    today = datetime.now().isoformat()
+    for it in raw_items:
+        items.append({
+            "title": it["name"],
+            "link": it.get("homepage") or it["detail_url"],
+            "summary": it["desc"],
+            "image": it["image"],
+            "date": today,
+            "source": "K-GMA 매체",
+            "category": "media",
+        })
+    _kgma_cache["data"] = items
+    _kgma_cache["ts"] = now
+    return items
+
+
+def fetch_all(force: bool = False) -> list:
+    now = time.time()
+    if not force and _cache["data"] and (now - _cache["ts"] < CACHE_TTL):
+        return _cache["data"]
+
+    all_sources = [s for group in SOURCES.values() for s in group]
+    all_items: list = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_one, s): s for s in all_sources}
+        for f in as_completed(futures):
+            all_items.extend(f.result())
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futures = {ex.submit(fetch_html_outlet, o): o for o in HTML_OUTLETS}
+        for f in as_completed(futures):
+            all_items.extend(f.result())
+
+    all_items.sort(key=lambda x: x["date"], reverse=True)
+    _cache["data"] = all_items
+    _cache["ts"] = now
+    return all_items
+
+
+def get_stats(items: list) -> dict:
+    by_source: dict = {}
+    by_category = {"global": 0, "korea": 0, "aws": 0, "media": 0}
+    by_tier = {1: 0, 2: 0, 3: 0}
+    for it in items:
+        by_source[it["source"]] = by_source.get(it["source"], 0) + 1
+        by_category[it["category"]] = by_category.get(it["category"], 0) + 1
+        by_tier[it.get("tier", 3)] = by_tier.get(it.get("tier", 3), 0) + 1
+    return {
+        "total": len(items),
+        "by_source": by_source,
+        "by_category": by_category,
+        "by_tier": by_tier,
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def sort_items(items: list, sort_by: str = "date") -> list:
+    if sort_by == "tier":
+        return sorted(items, key=lambda x: (x.get("tier", 3), -_iso_to_ts(x["date"])))
+    return sorted(items, key=lambda x: x["date"], reverse=True)
+
+
+def _iso_to_ts(iso: str) -> float:
+    try:
+        return datetime.fromisoformat(iso).timestamp()
+    except Exception:
+        return 0.0

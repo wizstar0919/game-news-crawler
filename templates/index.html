@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Game Pulse — 게임 뉴스 & 트렌드</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <h1>Game Pulse</h1>
+      </div>
+      <div class="header-meta">
+        <span class="meta-item">총 <strong>{{ stats.total }}</strong>건</span>
+        <span class="meta-item">업데이트 {{ stats.updated }}</span>
+        <button id="refresh-btn" class="btn-refresh">새로고침</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="filter-bar">
+    <div class="container filter-inner">
+      <div class="chip-group">
+        <button class="chip active" data-filter="all">전체 <span>{{ stats.total }}</span></button>
+        <button class="chip" data-filter="global">글로벌 <span>{{ stats.by_category.global }}</span></button>
+        <button class="chip" data-filter="korea">한국 <span>{{ stats.by_category.korea }}</span></button>
+        <button class="chip" data-filter="aws">AWS <span>{{ stats.by_category.aws }}</span></button>
+        <button class="chip" data-filter="media">매체 <span>{{ stats.by_category.media }}</span></button>
+      </div>
+      <div class="sort-group">
+        <span class="sort-label">정렬</span>
+        <button class="sort-btn {% if sort_by == 'date' %}active{% endif %}" data-sort="date">최신순</button>
+        <button class="sort-btn {% if sort_by == 'tier' %}active{% endif %}" data-sort="tier">기업 규모순</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container main-content">
+    <section class="news-grid" id="news-grid">
+      {% for item in items %}
+      <article class="card"
+               data-category="{{ item.category }}"
+               data-tier="{{ item.tier }}"
+               data-title="{{ item.title|e }}"
+               data-summary="{{ item.summary|e }}"
+               data-link="{{ item.link }}"
+               data-source="{{ item.source }}"
+               data-date="{{ item.date[:10] }}"
+               data-image="{{ item.image or '' }}"
+               data-category-label="{{ {'global':'글로벌','korea':'한국','aws':'AWS','media':'매체'}[item.category] }}">
+        {% if item.image %}
+        <div class="card-image" style="background-image: url('{{ item.image }}');"></div>
+        {% else %}
+        <div class="card-image card-image--placeholder">
+          <span>{{ item.source[:2] }}</span>
+        </div>
+        {% endif %}
+        <div class="card-body">
+          <div class="card-meta">
+            <span class="badge badge--{{ item.category }}">{{ item.source }}</span>
+            {% if item.tier < 3 %}<span class="tier-badge tier-{{ item.tier }}">T{{ item.tier }}</span>{% endif %}
+            <time class="card-date">{{ item.date[:10] }}</time>
+          </div>
+          <h2 class="card-title">{{ item.title }}</h2>
+          {% if item.summary %}
+          <p class="card-summary">{{ item.summary }}</p>
+          {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+
+    {% if not items %}
+    <div class="empty-state">
+      <p>표시할 뉴스가 없습니다. 잠시 후 다시 시도해주세요.</p>
+    </div>
+    {% endif %}
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>소스: GameSpot · IGN · Polygon · Kotaku · Eurogamer · GameMeca · AWS Game Tech · AWS News · K-GMA 등록 13개 매체</p>
+      <p class="footer-note">e스포츠 콘텐츠는 자동 제외되며, 영문 기사는 모달 열람 시 한국어로 번역됩니다.</p>
+    </div>
+  </footer>
+
+  <!-- Modal -->
+  <div class="modal" id="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <button class="modal-close" data-close aria-label="닫기">×</button>
+      <div class="modal-meta">
+        <span class="badge" id="m-badge"></span>
+        <span class="modal-date" id="m-date"></span>
+      </div>
+      <h2 class="modal-title" id="m-title"></h2>
+      <div class="modal-translate-status" id="m-status"></div>
+      <p class="modal-summary" id="m-summary"></p>
+      <div class="modal-actions">
+        <a class="btn-primary" id="m-link" target="_blank" rel="noopener noreferrer">원문 보기 →</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Filter
+    const chips = document.querySelectorAll('.chip');
+    const cards = document.querySelectorAll('.card');
+    let currentFilter = 'all';
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        chips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentFilter = chip.dataset.filter;
+        cards.forEach(card => {
+          card.style.display = (currentFilter === 'all' || card.dataset.category === currentFilter) ? '' : 'none';
+        });
+      });
+    });
+
+    // Sort — reload with query param to leverage server-side sorting
+    document.querySelectorAll('.sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const url = new URL(window.location);
+        url.searchParams.set('sort', btn.dataset.sort);
+        window.location = url.toString();
+      });
+    });
+
+    // Refresh
+    const refreshBtn = document.getElementById('refresh-btn');
+    refreshBtn.addEventListener('click', async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = '갱신 중…';
+      try {
+        await fetch('/api/refresh');
+        location.reload();
+      } catch (e) {
+        refreshBtn.textContent = '오류';
+        setTimeout(() => {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = '새로고침';
+        }, 2000);
+      }
+    });
+
+    // Modal
+    const modal = document.getElementById('modal');
+    const mTitle = document.getElementById('m-title');
+    const mSummary = document.getElementById('m-summary');
+    const mBadge = document.getElementById('m-badge');
+    const mDate = document.getElementById('m-date');
+    const mLink = document.getElementById('m-link');
+    const mStatus = document.getElementById('m-status');
+
+    function openModal(data) {
+      mTitle.textContent = data.title;
+      mSummary.textContent = data.summary || '요약 없음 — 원문에서 전체 내용을 확인하세요.';
+      mBadge.textContent = data.source;
+      mBadge.className = 'badge badge--' + data.category;
+      mDate.textContent = data.date;
+      mLink.href = data.link;
+      mStatus.textContent = '';
+      modal.classList.add('open');
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+
+      // English category → fetch Korean translation
+      if (data.category === 'global' || data.category === 'aws') {
+        mStatus.textContent = '한국어 번역 중…';
+        fetch('/api/translate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({title: data.title, summary: data.summary || ''}),
+        })
+          .then(r => r.json())
+          .then(t => {
+            if (t.title) mTitle.textContent = t.title;
+            if (t.summary) mSummary.textContent = t.summary;
+            mStatus.textContent = '↻ 한국어 번역 완료 · 원문은 영어입니다';
+          })
+          .catch(() => { mStatus.textContent = '번역 실패 — 원문 표시 중'; });
+      }
+    }
+
+    function closeModal() {
+      modal.classList.remove('open');
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+
+    cards.forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.tagName === 'A') return;
+        openModal({
+          title: card.dataset.title,
+          summary: card.dataset.summary,
+          link: card.dataset.link,
+          source: card.dataset.source,
+          date: card.dataset.date,
+          category: card.dataset.category,
+          categoryLabel: card.dataset.categoryLabel,
+        });
+      });
+    });
+
+    modal.querySelectorAll('[data-close]').forEach(el => {
+      el.addEventListener('click', closeModal);
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+    });
+  </script>
+</body>
+</html>
