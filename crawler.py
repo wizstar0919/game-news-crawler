@@ -1,10 +1,12 @@
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import re
+
+import store
 
 SOURCES = {
     "global": [
@@ -97,7 +99,9 @@ def _is_esports(text: str) -> bool:
             return True
     return False
 
-_cache = {"data": [], "ts": 0}
+# ts: 마지막으로 외부 사이트를 크롤한 시각. 화면 데이터는 항상 store 에서 읽으므로
+# 캐시는 "재크롤 여부"만 판단한다(북마크 등 저장소 변경이 즉시 반영되도록).
+_cache = {"ts": 0}
 CACHE_TTL = 600
 
 HTML_OUTLETS = [
@@ -162,6 +166,111 @@ def _parse_date(entry) -> datetime:
             except Exception:
                 continue
     return datetime.now()
+
+
+# 상세 페이지에서 작성일로 인정할 meta 키 (소문자 비교)
+_DATE_META_KEYS = {
+    "article:published_time", "article:modified_time", "og:updated_time",
+    "datepublished", "date", "pubdate", "publishdate", "sailthru.date",
+}
+
+# "2026-05-31", "2026.05.31 15:04", "2026년 5월 31일 15:04" 등
+_DATE_RE = re.compile(
+    r"(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})(?:\D{1,3}?(\d{1,2}):(\d{2}))?"
+)
+
+
+def _to_naive_iso(dt: datetime) -> str:
+    """tz 가 있으면 로컬 시간으로 변환 후 tz 를 떼고 ISO 문자열로 통일한다."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt.replace(microsecond=0).isoformat()
+
+
+def _parse_date_str(s: str):
+    if not s:
+        return None
+    s = s.strip()
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+        "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d",
+        "%Y/%m/%d %H:%M", "%Y/%m/%d",
+        "%Y년 %m월 %d일 %H:%M", "%Y년 %m월 %d일",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    m = _DATE_RE.search(s)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        hh = int(m.group(4)) if m.group(4) else 0
+        mm = int(m.group(5)) if m.group(5) else 0
+        try:
+            return datetime(y, mo, d, hh, mm)
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_article_date(html: str):
+    """기사 상세 HTML 에서 작성일을 추출한다. (JSON-LD → meta → <time> → 본문 정규식)"""
+    if not html:
+        return None
+    m = re.search(r'"datePublished"\s*:\s*"([^"]+)"', html)
+    if m:
+        d = _parse_date_str(m.group(1))
+        if d:
+            return d
+    soup = BeautifulSoup(html, "html.parser")
+    for meta in soup.find_all("meta"):
+        key = (meta.get("property") or meta.get("name") or meta.get("itemprop") or "").lower()
+        if key in _DATE_META_KEYS and meta.get("content"):
+            d = _parse_date_str(meta["content"])
+            if d:
+                return d
+    t = soup.find("time")
+    if t:
+        d = _parse_date_str(t.get("datetime") or t.get_text(" ", strip=True))
+        if d:
+            return d
+    return None
+
+
+# HTML 스크래핑 작성일은 신뢰도가 낮다(템플릿/저작권 고정 날짜를 긁는 경우가 있음).
+# 미래이거나 너무 오래된(아래 일수 초과) 값은 버리고 수집 시각으로 대체한다.
+_HTML_DATE_MAX_AGE_DAYS = 30
+
+
+def _sane_html_date(iso_str):
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str)
+    except ValueError:
+        return None
+    now = datetime.now()
+    if dt > now + timedelta(days=1):
+        return None  # 미래 날짜 → 오파싱
+    if dt < now - timedelta(days=_HTML_DATE_MAX_AGE_DAYS):
+        return None  # 지나치게 오래됨 → 고정 날짜로 의심
+    return iso_str
+
+
+def _fetch_article_date(url: str):
+    """기사 상세 페이지를 받아 신뢰 가능한 작성일(naive ISO)을 반환한다. 실패/비정상 시 None."""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=8)
+        r.raise_for_status()
+        html = r.content.decode(r.encoding or "utf-8", errors="replace")
+        d = _extract_article_date(html)
+        return _sane_html_date(_to_naive_iso(d)) if d else None
+    except Exception:
+        return None
 
 
 def _is_game_related(text: str) -> bool:
@@ -268,7 +377,7 @@ def fetch_html_outlet(outlet: dict) -> list:
                 "link": _resolve_link(data["href"], outlet["link_base"]),
                 "summary": summary,
                 "image": None,
-                "date": datetime.now().isoformat(),
+                "date": None,  # 실제 작성일은 fetch_all 에서 상세 페이지로 보강
                 "source": outlet["name"],
                 "category": "media",
                 "tier": _company_tier(blob),
@@ -388,42 +497,75 @@ def fetch_kgma(force: bool = False) -> list:
     return items
 
 
+def _enrich_html_dates(html_items: list) -> None:
+    """HTML 매체 기사의 실제 작성일을 채운다.
+    이미 저장소에 있는 link 는 저장된 날짜를 재사용하고, 새 기사만 상세 페이지를 요청한다."""
+    known = store.get_known_dates([i["link"] for i in html_items])
+    to_fetch = [i for i in html_items if i["link"] not in known]
+
+    fetched: dict = {}
+    if to_fetch:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(_fetch_article_date, i["link"]): i["link"] for i in to_fetch}
+            for f in as_completed(futures):
+                fetched[futures[f]] = f.result()
+
+    for i in html_items:
+        link = i["link"]
+        if link in known:
+            i["date"] = known[link]
+        else:
+            i["date"] = fetched.get(link) or datetime.now().isoformat()
+
+
 def fetch_all(force: bool = False) -> list:
+    """저장소(store)에 누적된 기사 전체를 반환한다.
+    마지막 크롤 후 CACHE_TTL 이 지났거나 force 면 외부 사이트를 다시 크롤해 누적·정리한다.
+    화면 데이터는 항상 store 에서 읽으므로 북마크 변경이 즉시 반영된다."""
     now = time.time()
-    if not force and _cache["data"] and (now - _cache["ts"] < CACHE_TTL):
-        return _cache["data"]
+    stale = force or not _cache["ts"] or (now - _cache["ts"] >= CACHE_TTL)
 
-    all_sources = [s for group in SOURCES.values() for s in group]
-    all_items: list = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        futures = {ex.submit(fetch_one, s): s for s in all_sources}
-        for f in as_completed(futures):
-            all_items.extend(f.result())
+    if stale:
+        all_sources = [s for group in SOURCES.values() for s in group]
+        rss_items: list = []
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(fetch_one, s): s for s in all_sources}
+            for f in as_completed(futures):
+                rss_items.extend(f.result())
 
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futures = {ex.submit(fetch_html_outlet, o): o for o in HTML_OUTLETS}
-        for f in as_completed(futures):
-            all_items.extend(f.result())
+        html_items: list = []
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            futures = {ex.submit(fetch_html_outlet, o): o for o in HTML_OUTLETS}
+            for f in as_completed(futures):
+                html_items.extend(f.result())
 
-    all_items.sort(key=lambda x: x["date"], reverse=True)
-    _cache["data"] = all_items
-    _cache["ts"] = now
-    return all_items
+        _enrich_html_dates(html_items)
+
+        # 누적 저장 → 5일(first_seen) 지난 기사 정리(북마크 제외)
+        store.upsert_many(rss_items + html_items)
+        store.prune()
+        _cache["ts"] = now
+
+    return store.all_items()
 
 
 def get_stats(items: list) -> dict:
     by_source: dict = {}
     by_category = {"global": 0, "korea": 0, "aws": 0, "media": 0}
     by_tier = {1: 0, 2: 0, 3: 0}
+    bookmarks = 0
     for it in items:
         by_source[it["source"]] = by_source.get(it["source"], 0) + 1
         by_category[it["category"]] = by_category.get(it["category"], 0) + 1
         by_tier[it.get("tier", 3)] = by_tier.get(it.get("tier", 3), 0) + 1
+        if it.get("bookmarked"):
+            bookmarks += 1
     return {
         "total": len(items),
         "by_source": by_source,
         "by_category": by_category,
         "by_tier": by_tier,
+        "bookmarks": bookmarks,
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 

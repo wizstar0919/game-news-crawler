@@ -1,6 +1,7 @@
 from flask import Flask, render_template, jsonify, request
 from crawler import fetch_all, get_stats, sort_items
 from translator import translate_to_korean
+import store
 
 app = Flask(__name__)
 
@@ -31,6 +32,19 @@ def api_news():
 def api_refresh():
     items = fetch_all(force=True)
     return jsonify({"count": len(items), "stats": get_stats(items)})
+
+
+@app.route("/api/bookmark", methods=["POST"])
+def api_bookmark():
+    data = request.get_json(silent=True) or {}
+    link = data.get("link", "")
+    bookmarked = bool(data.get("bookmarked", False))
+    if not link:
+        return jsonify({"ok": False, "error": "link required"}), 400
+    ok = store.set_bookmark(link, bookmarked)
+    if not ok:
+        return jsonify({"ok": False, "error": "not found"}), 404
+    return jsonify({"ok": True, "link": link, "bookmarked": bookmarked})
 
 
 @app.route("/api/translate", methods=["POST"])

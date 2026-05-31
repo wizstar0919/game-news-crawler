@@ -11,7 +11,11 @@
 - **번역 캐시** — 디스크 캐시로 재열람 시 즉시 표시
 - **기업 규모 정렬** — 게임사 티어(Tier 1/2/3)로 정렬
 - **e스포츠 자동 제외** — 키워드 기반 필터링
-- **10분 캐시** — 외부 사이트 부하 최소화
+- **누적 저장(JSON)** — 수집한 기사를 `articles.json`에 link 기준으로 누적 → 피드에서 밀려나도 사라지지 않음
+- **실제 작성일 파싱** — RSS published 날짜 + HTML 매체는 상세 페이지에서 작성일 추출(JSON-LD/meta/`<time>`)
+- **5일 보존** — 수집 후 5일이 지난 기사는 자동 삭제 (수집 시각 기준)
+- **북마크** — 북마크한 기사는 5일이 지나도 영구 보존, 북마크 필터 제공
+- **10분 캐시** — 외부 사이트 부하 최소화 (새로고침 버튼은 항상 재크롤)
 
 ## 수집 소스
 
@@ -51,17 +55,20 @@ python app.py
 - `GET /api/news` — JSON 응답 (쿼리: `?category=...&source=...&sort=...`)
 - `GET /api/refresh` — 캐시 무효화 후 재크롤
 - `POST /api/translate` — `{title, summary}` 한국어 번역
+- `POST /api/bookmark` — `{link, bookmarked}` 북마크 토글 (보존 대상 지정)
 
 ## 프로젝트 구조
 
 ```
 game-news-crawler/
-├── app.py              # Flask 라우트
-├── crawler.py          # 크롤러 + e스포츠 필터 + 기업 티어 + 정렬
+├── app.py              # Flask 라우트 (북마크 API 포함)
+├── crawler.py          # 크롤러 + 작성일 파싱 + e스포츠 필터 + 기업 티어 + 정렬
+├── store.py            # JSON 누적 저장 + 5일 보존 + 북마크
 ├── translator.py       # 번역 + 디스크 캐시
+├── articles.json       # 누적 저장된 기사 (GitHub 함께 커밋)
 ├── requirements.txt
 ├── templates/
-│   └── index.html      # 카드 그리드 + 모달 UI
+│   └── index.html      # 카드 그리드 + 모달 UI + 북마크
 ├── static/
 │   └── style.css       # 미니멀 디자인
 └── .gitignore
@@ -73,3 +80,5 @@ game-news-crawler/
 - **기업 티어**: `crawler.py:COMPANY_TIERS` 딕셔너리
 - **e스포츠 키워드**: `crawler.py:ESPORTS_KEYWORDS` 리스트
 - **캐시 TTL**: `crawler.py:CACHE_TTL` (기본 600초)
+- **보존 기간**: `store.py:RETENTION_DAYS` (기본 5일, 북마크는 예외)
+- **HTML 작성일 신뢰 범위**: `crawler.py:_HTML_DATE_MAX_AGE_DAYS` (기본 30일, 초과 시 수집 시각 사용)

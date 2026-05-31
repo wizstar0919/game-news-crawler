@@ -29,6 +29,7 @@
         <button class="chip" data-filter="korea">한국 <span>{{ stats.by_category.korea }}</span></button>
         <button class="chip" data-filter="aws">AWS <span>{{ stats.by_category.aws }}</span></button>
         <button class="chip" data-filter="media">매체 <span>{{ stats.by_category.media }}</span></button>
+        <button class="chip chip--bookmark" data-filter="bookmark">★ 북마크 <span id="bookmark-count">{{ stats.bookmarks }}</span></button>
       </div>
       <div class="sort-group">
         <span class="sort-label">정렬</span>
@@ -41,7 +42,7 @@
   <main class="container main-content">
     <section class="news-grid" id="news-grid">
       {% for item in items %}
-      <article class="card"
+      <article class="card{% if item.bookmarked %} card--bookmarked{% endif %}"
                data-category="{{ item.category }}"
                data-tier="{{ item.tier }}"
                data-title="{{ item.title|e }}"
@@ -50,6 +51,7 @@
                data-source="{{ item.source }}"
                data-date="{{ item.date[:10] }}"
                data-image="{{ item.image or '' }}"
+               data-bookmarked="{{ '1' if item.bookmarked else '0' }}"
                data-category-label="{{ {'global':'글로벌','korea':'한국','aws':'AWS','media':'매체'}[item.category] }}">
         {% if item.image %}
         <div class="card-image" style="background-image: url('{{ item.image }}');"></div>
@@ -63,6 +65,7 @@
             <span class="badge badge--{{ item.category }}">{{ item.source }}</span>
             {% if item.tier < 3 %}<span class="tier-badge tier-{{ item.tier }}">T{{ item.tier }}</span>{% endif %}
             <time class="card-date">{{ item.date[:10] }}</time>
+            <span class="card-star" aria-hidden="true">★</span>
           </div>
           <h2 class="card-title">{{ item.title }}</h2>
           {% if item.summary %}
@@ -101,6 +104,9 @@
       <p class="modal-summary" id="m-summary"></p>
       <div class="modal-actions">
         <a class="btn-primary" id="m-link" target="_blank" rel="noopener noreferrer">원문 보기 →</a>
+        <button class="btn-bookmark" id="m-bookmark" type="button" aria-pressed="false">
+          <span class="bookmark-icon">☆</span><span id="m-bookmark-label">북마크</span>
+        </button>
       </div>
     </div>
   </div>
@@ -110,14 +116,20 @@
     const chips = document.querySelectorAll('.chip');
     const cards = document.querySelectorAll('.card');
     let currentFilter = 'all';
+    function matchesFilter(card) {
+      if (currentFilter === 'all') return true;
+      if (currentFilter === 'bookmark') return card.dataset.bookmarked === '1';
+      return card.dataset.category === currentFilter;
+    }
+    function applyFilter() {
+      cards.forEach(card => { card.style.display = matchesFilter(card) ? '' : 'none'; });
+    }
     chips.forEach(chip => {
       chip.addEventListener('click', () => {
         chips.forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         currentFilter = chip.dataset.filter;
-        cards.forEach(card => {
-          card.style.display = (currentFilter === 'all' || card.dataset.category === currentFilter) ? '' : 'none';
-        });
+        applyFilter();
       });
     });
 
@@ -155,8 +167,21 @@
     const mDate = document.getElementById('m-date');
     const mLink = document.getElementById('m-link');
     const mStatus = document.getElementById('m-status');
+    const mBookmark = document.getElementById('m-bookmark');
+    const mBookmarkLabel = document.getElementById('m-bookmark-label');
+    const bookmarkCountEl = document.getElementById('bookmark-count');
+    let currentCard = null;
 
-    function openModal(data) {
+    function renderBookmarkBtn(on) {
+      mBookmark.classList.toggle('active', on);
+      mBookmark.setAttribute('aria-pressed', on ? 'true' : 'false');
+      mBookmark.querySelector('.bookmark-icon').textContent = on ? '★' : '☆';
+      mBookmarkLabel.textContent = on ? '북마크됨' : '북마크';
+    }
+
+    function openModal(data, card) {
+      currentCard = card;
+      renderBookmarkBtn(card && card.dataset.bookmarked === '1');
       mTitle.textContent = data.title;
       mSummary.textContent = data.summary || '요약 없음 — 원문에서 전체 내용을 확인하세요.';
       mBadge.textContent = data.source;
@@ -203,8 +228,34 @@
           date: card.dataset.date,
           category: card.dataset.category,
           categoryLabel: card.dataset.categoryLabel,
-        });
+        }, card);
       });
+    });
+
+    // Bookmark toggle
+    mBookmark.addEventListener('click', async () => {
+      if (!currentCard) return;
+      const link = currentCard.dataset.link;
+      const next = currentCard.dataset.bookmarked !== '1';
+      mBookmark.disabled = true;
+      try {
+        const res = await fetch('/api/bookmark', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({link: link, bookmarked: next}),
+        });
+        if (!res.ok) throw new Error('failed');
+        currentCard.dataset.bookmarked = next ? '1' : '0';
+        currentCard.classList.toggle('card--bookmarked', next);
+        renderBookmarkBtn(next);
+        const cur = parseInt(bookmarkCountEl.textContent, 10) || 0;
+        bookmarkCountEl.textContent = next ? cur + 1 : Math.max(0, cur - 1);
+        if (currentFilter === 'bookmark') applyFilter();
+      } catch (e) {
+        mBookmarkLabel.textContent = '오류 — 다시 시도';
+      } finally {
+        mBookmark.disabled = false;
+      }
     });
 
     modal.querySelectorAll('[data-close]').forEach(el => {
