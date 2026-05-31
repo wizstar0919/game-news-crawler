@@ -13,6 +13,9 @@ import threading
 from datetime import datetime, timedelta
 
 DATA_PATH = os.path.join(os.path.dirname(__file__), "articles.json")
+# 사용자별 북마크 저장 파일. 사용자가 입력한 "코드"별로 북마크한 link 목록을 담는다.
+# 개인정보(누가 무엇을 북마크했는지)가 들어가므로 GitHub 에 올리지 않는다(.gitignore).
+USER_BM_PATH = os.path.join(os.path.dirname(__file__), "user_bookmarks.json")
 RETENTION_DAYS = 5
 
 _lock = threading.Lock()
@@ -46,6 +49,67 @@ def _parse(iso: str) -> datetime:
         return datetime.now()
 
 
+def _load_user_bm() -> dict:
+    if not os.path.exists(USER_BM_PATH):
+        return {}
+    try:
+        with open(USER_BM_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_user_bm(data: dict) -> None:
+    tmp = USER_BM_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+    os.replace(tmp, USER_BM_PATH)
+
+
+def get_user_bookmarks(user_code: str) -> list:
+    """해당 코드(사용자)가 북마크한 link 목록을 반환한다."""
+    if not user_code:
+        return []
+    with _lock:
+        data = _load_user_bm()
+    links = data.get(user_code)
+    return list(links) if isinstance(links, list) else []
+
+
+def set_user_bookmark(user_code: str, link: str, value: bool) -> bool:
+    """코드(사용자)별 북마크 토글. 대상 기사가 저장소에 있으면 True, 없으면 False."""
+    if not user_code or not link:
+        return False
+    with _lock:
+        if link not in _load():  # 존재하는 기사만 북마크 가능
+            return False
+        data = _load_user_bm()
+        links = data.get(user_code)
+        if not isinstance(links, list):
+            links = []
+        if value:
+            if link not in links:
+                links.append(link)
+        else:
+            links = [l for l in links if l != link]
+        if links:
+            data[user_code] = links
+        else:
+            data.pop(user_code, None)  # 빈 사용자는 정리
+        _save_user_bm(data)
+    return True
+
+
+def _all_bookmarked_links() -> set:
+    """누구든 한 명이라도 북마크한 link 의 집합. (보존 판단용, _lock 보유 상태에서 호출)"""
+    out: set = set()
+    for links in _load_user_bm().values():
+        if isinstance(links, list):
+            out.update(links)
+    return out
+
+
 def get_known_dates(links: list) -> dict:
     """이미 저장된 link 의 작성일을 반환한다 (HTML 매체 상세 재요청을 줄이기 위함)."""
     with _lock:
@@ -72,7 +136,6 @@ def upsert_many(items: list) -> None:
                 rec["link"] = link
                 rec["date"] = it.get("date") or now
                 rec["first_seen"] = now
-                rec["bookmarked"] = False
                 data[link] = rec
         _save(data)
 
@@ -83,9 +146,10 @@ def prune(days: int = RETENTION_DAYS) -> int:
     removed = 0
     with _lock:
         data = _load()
+        bookmarked = _all_bookmarked_links()  # 누구든 북마크한 기사는 보존
         for link in list(data.keys()):
             rec = data[link]
-            if rec.get("bookmarked"):
+            if link in bookmarked:
                 continue
             # first_seen 이 없는 과거 데이터는 date 로 대체
             basis = rec.get("first_seen") or rec.get("date", "")
@@ -95,17 +159,6 @@ def prune(days: int = RETENTION_DAYS) -> int:
         if removed:
             _save(data)
     return removed
-
-
-def set_bookmark(link: str, value: bool) -> bool:
-    """북마크 토글. 대상이 있으면 True, 없으면 False."""
-    with _lock:
-        data = _load()
-        if link not in data:
-            return False
-        data[link]["bookmarked"] = bool(value)
-        _save(data)
-    return True
 
 
 def all_items() -> list:

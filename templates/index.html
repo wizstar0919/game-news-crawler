@@ -16,6 +16,7 @@
       <div class="header-meta">
         <span class="meta-item">총 <strong>{{ stats.total }}</strong>건</span>
         <span class="meta-item">업데이트 {{ stats.updated }}</span>
+        <button id="user-btn" class="btn-user" title="기기가 바뀌어도 같은 코드를 넣으면 내 북마크가 따라옵니다">👤 코드 설정</button>
         <button id="refresh-btn" class="btn-refresh">새로고침</button>
       </div>
     </div>
@@ -29,20 +30,23 @@
         <button class="chip" data-filter="korea">한국 <span>{{ stats.by_category.korea }}</span></button>
         <button class="chip" data-filter="aws">AWS <span>{{ stats.by_category.aws }}</span></button>
         <button class="chip" data-filter="media">매체 <span>{{ stats.by_category.media }}</span></button>
-        <button class="chip chip--bookmark" data-filter="bookmark">★ 북마크 <span id="bookmark-count">{{ stats.bookmarks }}</span></button>
+        <button class="chip chip--bookmark" data-filter="bookmark">★ 북마크 <span id="bookmark-count">0</span></button>
       </div>
-      <div class="sort-group">
-        <span class="sort-label">정렬</span>
-        <button class="sort-btn {% if sort_by == 'date' %}active{% endif %}" data-sort="date">최신순</button>
-        <button class="sort-btn {% if sort_by == 'tier' %}active{% endif %}" data-sort="tier">기업 규모순</button>
+      <div class="chip-group chip-group--size">
+        <span class="sort-label">게임사 규모</span>
+        <button class="chip chip-size active" data-size="all">전체</button>
+        <button class="chip chip-size" data-size="1">대형 게임사 <span>{{ stats.by_tier[1] }}</span></button>
+        <button class="chip chip-size" data-size="2">중형 게임사 <span>{{ stats.by_tier[2] }}</span></button>
+        <button class="chip chip-size" data-size="3">소형 게임사 <span>{{ stats.by_tier[3] }}</span></button>
       </div>
     </div>
   </nav>
 
   <main class="container main-content">
     <section class="news-grid" id="news-grid">
+      {% set tier_labels = {1: '대형', 2: '중형', 3: '소형'} %}
       {% for item in items %}
-      <article class="card{% if item.bookmarked %} card--bookmarked{% endif %}"
+      <article class="card"
                data-category="{{ item.category }}"
                data-tier="{{ item.tier }}"
                data-title="{{ item.title|e }}"
@@ -51,7 +55,7 @@
                data-source="{{ item.source }}"
                data-date="{{ item.date[:10] }}"
                data-image="{{ item.image or '' }}"
-               data-bookmarked="{{ '1' if item.bookmarked else '0' }}"
+               data-bookmarked="0"
                data-category-label="{{ {'global':'글로벌','korea':'한국','aws':'AWS','media':'매체'}[item.category] }}">
         {% if item.image %}
         <div class="card-image" style="background-image: url('{{ item.image }}');"></div>
@@ -63,7 +67,7 @@
         <div class="card-body">
           <div class="card-meta">
             <span class="badge badge--{{ item.category }}">{{ item.source }}</span>
-            {% if item.tier < 3 %}<span class="tier-badge tier-{{ item.tier }}">T{{ item.tier }}</span>{% endif %}
+            <span class="tier-badge tier-{{ item.tier }}">{{ tier_labels.get(item.tier, '소형') }}</span>
             <time class="card-date">{{ item.date[:10] }}</time>
             <span class="card-star" aria-hidden="true">★</span>
           </div>
@@ -113,13 +117,20 @@
 
   <script>
     // Filter
-    const chips = document.querySelectorAll('.chip');
+    const chips = document.querySelectorAll('.chip[data-filter]');
+    const sizeChips = document.querySelectorAll('.chip-size');
     const cards = document.querySelectorAll('.card');
     let currentFilter = 'all';
+    let currentSize = 'all';
     function matchesFilter(card) {
-      if (currentFilter === 'all') return true;
-      if (currentFilter === 'bookmark') return card.dataset.bookmarked === '1';
-      return card.dataset.category === currentFilter;
+      // 카테고리(글로벌/한국/AWS/매체/북마크)
+      let catOk;
+      if (currentFilter === 'all') catOk = true;
+      else if (currentFilter === 'bookmark') catOk = card.dataset.bookmarked === '1';
+      else catOk = card.dataset.category === currentFilter;
+      // 게임사 규모(대형/중형/소형)
+      const sizeOk = currentSize === 'all' || card.dataset.tier === currentSize;
+      return catOk && sizeOk;
     }
     function applyFilter() {
       cards.forEach(card => { card.style.display = matchesFilter(card) ? '' : 'none'; });
@@ -132,15 +143,63 @@
         applyFilter();
       });
     });
-
-    // Sort — reload with query param to leverage server-side sorting
-    document.querySelectorAll('.sort-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const url = new URL(window.location);
-        url.searchParams.set('sort', btn.dataset.sort);
-        window.location = url.toString();
+    sizeChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        sizeChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentSize = chip.dataset.size;
+        applyFilter();
       });
     });
+
+    // ── 사용자별 북마크 (코드 기반) ──────────────────────────
+    // 코드는 브라우저에 기억해두되, 북마크 내용 자체는 서버가 코드별로 보관한다.
+    // 따라서 다른 기기에서 같은 코드를 입력하면 북마크가 그대로 따라온다.
+    const userBtn = document.getElementById('user-btn');
+    const bookmarkCountSpan = document.getElementById('bookmark-count');
+    let userCode = (localStorage.getItem('gp_user_code') || '').trim();
+
+    function refreshUserBtn() {
+      userBtn.textContent = userCode ? ('👤 ' + userCode) : '👤 코드 설정';
+    }
+
+    function markBookmarks(links) {
+      const set = new Set(links);
+      cards.forEach(card => {
+        const on = set.has(card.dataset.link);
+        card.dataset.bookmarked = on ? '1' : '0';
+        card.classList.toggle('card--bookmarked', on);
+      });
+      bookmarkCountSpan.textContent = links.length;
+      if (currentFilter === 'bookmark') applyFilter();
+    }
+
+    async function loadUserBookmarks() {
+      if (!userCode) { markBookmarks([]); return; }
+      try {
+        const res = await fetch('/api/bookmarks?code=' + encodeURIComponent(userCode));
+        const data = await res.json();
+        markBookmarks(Array.isArray(data.links) ? data.links : []);
+      } catch (e) { markBookmarks([]); }
+    }
+
+    function setUserCode() {
+      const input = prompt(
+        '내 북마크 코드를 입력하세요.\n' +
+        '아무 단어나 정하면 됩니다 (예: jason2026).\n' +
+        '다른 기기에서도 같은 코드를 넣으면 북마크가 똑같이 보입니다.',
+        userCode);
+      if (input === null) return;  // 취소
+      userCode = input.trim();
+      if (userCode) localStorage.setItem('gp_user_code', userCode);
+      else localStorage.removeItem('gp_user_code');
+      refreshUserBtn();
+      loadUserBookmarks();
+    }
+
+    userBtn.addEventListener('click', setUserCode);
+    refreshUserBtn();
+    loadUserBookmarks();
 
     // Refresh
     const refreshBtn = document.getElementById('refresh-btn');
@@ -235,6 +294,10 @@
     // Bookmark toggle
     mBookmark.addEventListener('click', async () => {
       if (!currentCard) return;
+      if (!userCode) {            // 코드가 없으면 먼저 설정하도록 유도
+        setUserCode();
+        if (!userCode) return;    // 그래도 안 정했으면 중단
+      }
       const link = currentCard.dataset.link;
       const next = currentCard.dataset.bookmarked !== '1';
       mBookmark.disabled = true;
@@ -242,7 +305,7 @@
         const res = await fetch('/api/bookmark', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({link: link, bookmarked: next}),
+          body: JSON.stringify({code: userCode, link: link, bookmarked: next}),
         });
         if (!res.ok) throw new Error('failed');
         currentCard.dataset.bookmarked = next ? '1' : '0';

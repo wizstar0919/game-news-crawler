@@ -34,14 +34,24 @@ def api_refresh():
     return jsonify({"count": len(items), "stats": get_stats(items)})
 
 
+@app.route("/api/bookmarks")
+def api_bookmarks():
+    """해당 코드(사용자)가 북마크한 link 목록을 반환한다."""
+    code = (request.args.get("code") or "").strip()
+    return jsonify({"links": store.get_user_bookmarks(code)})
+
+
 @app.route("/api/bookmark", methods=["POST"])
 def api_bookmark():
     data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
     link = data.get("link", "")
     bookmarked = bool(data.get("bookmarked", False))
+    if not code:
+        return jsonify({"ok": False, "error": "code required"}), 400
     if not link:
         return jsonify({"ok": False, "error": "link required"}), 400
-    ok = store.set_bookmark(link, bookmarked)
+    ok = store.set_user_bookmark(code, link, bookmarked)
     if not ok:
         return jsonify({"ok": False, "error": "not found"}), 404
     return jsonify({"ok": True, "link": link, "bookmarked": bookmarked})
