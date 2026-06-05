@@ -35,6 +35,7 @@
         <button class="chip chip--bookmark" data-filter="bookmark">★ 북마크 <span id="bookmark-count">0</span></button>
         <button class="chip chip--watchlist" data-filter="watchlist">🏢 워치리스트 <span id="watchlist-count">0</span></button>
         <button class="chip chip--jobs" data-filter="jobs">💼 채용</button>
+        <button class="chip chip--directory" data-filter="directory">🎯 게임사 디렉토리</button>
       </div>
       <!-- Row 2: 게임사 규모 -->
       <div class="chip-group" id="size-row">
@@ -126,6 +127,51 @@
       <div class="news-grid" id="jobs-grid"></div>
       <div class="empty-state" id="jobs-empty" style="display:none">
         <p>표시할 채용 공고가 없습니다. "회사 관리"에서 관심 회사를 추가해보세요.</p>
+      </div>
+    </section>
+
+    <!-- 게임사 디렉토리 (탭 누를 때 지연 로드) -->
+    <section class="dir-view" id="dir-view" style="display:none">
+      <div class="jobs-toolbar">
+        <div class="jobs-toolbar-info">
+          <strong id="dir-summary">디렉토리를 불러오는 중…</strong>
+          <span class="jobs-hint">국민연금·DART·채용 신호를 합친 AWS 영업 타겟 점수</span>
+        </div>
+        <div class="jobs-toolbar-actions">
+          <button id="dir-refresh-btn" class="btn-refresh">디렉토리 새로고침</button>
+        </div>
+      </div>
+      <div class="dir-filters">
+        <input type="text" id="dir-search" class="dir-search" placeholder="회사명·지역 검색…">
+        <div class="dir-chip-group" id="dir-grade-row">
+          <button class="chip dir-chip active" data-grade="all">전체</button>
+          <button class="chip dir-chip" data-grade="핫">🔥 핫</button>
+          <button class="chip dir-chip" data-grade="관심">🟡 관심</button>
+          <button class="chip dir-chip" data-grade="일반">⚪ 일반</button>
+        </div>
+        <div class="dir-chip-group" id="dir-emp-row">
+          <span class="sort-label">직원수</span>
+          <button class="chip dir-chip dir-emp active" data-emp="all">전체</button>
+          <button class="chip dir-chip dir-emp" data-emp="s">~49</button>
+          <button class="chip dir-chip dir-emp" data-emp="m">50~299</button>
+          <button class="chip dir-chip dir-emp" data-emp="l">300+</button>
+        </div>
+        <label class="dir-toggle"><input type="checkbox" id="dir-server-only"> 서버채용 중만</label>
+      </div>
+      <div class="dir-table-wrap">
+        <table class="dir-table">
+          <thead>
+            <tr>
+              <th>등급</th><th>점수</th><th>회사</th><th>규모</th>
+              <th class="num">직원</th><th class="num">순증</th>
+              <th class="num">매출</th><th class="num">서버채용</th><th>지역</th>
+            </tr>
+          </thead>
+          <tbody id="dir-tbody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="dir-empty" style="display:none">
+        <p>표시할 게임사가 없습니다. (국민연금 API 키가 필요할 수 있어요)</p>
       </div>
     </section>
   </main>
@@ -259,9 +305,11 @@
     const sizeRow = document.getElementById('size-row');
     const signalRow = document.getElementById('signal-row');
     const jobsView = document.getElementById('jobs-view');
+    const dirView = document.getElementById('dir-view');
 
     function showNewsView() {
       jobsView.style.display = 'none';
+      dirView.style.display = 'none';
       newsGrid.style.display = '';
       sizeRow.style.display = '';
       signalRow.style.display = '';
@@ -270,8 +318,17 @@
       newsGrid.style.display = 'none';
       sizeRow.style.display = 'none';
       signalRow.style.display = 'none';
+      dirView.style.display = 'none';
       jobsView.style.display = '';
       loadJobs();  // 최초 1회만 실제 로드 (내부에서 캐시)
+    }
+    function showDirectoryView() {
+      newsGrid.style.display = 'none';
+      sizeRow.style.display = 'none';
+      signalRow.style.display = 'none';
+      jobsView.style.display = 'none';
+      dirView.style.display = '';
+      loadDirectory();  // 최초 1회만 실제 로드 (내부에서 캐시)
     }
 
     chips.forEach(chip => {
@@ -280,6 +337,7 @@
         chip.classList.add('active');
         currentFilter = chip.dataset.filter;
         if (currentFilter === 'jobs') { showJobsView(); return; }
+        if (currentFilter === 'directory') { showDirectoryView(); return; }
         showNewsView();
         applyFilter();
       });
@@ -637,6 +695,103 @@
       await loadJobs(true);
       jobsRefreshBtn.disabled = false;
       jobsRefreshBtn.textContent = '채용 새로고침';
+    });
+
+    // ── 게임사 디렉토리 ──────────────────────────────────────
+    const dirTbody    = document.getElementById('dir-tbody');
+    const dirEmpty    = document.getElementById('dir-empty');
+    const dirSummary  = document.getElementById('dir-summary');
+    const dirSearch   = document.getElementById('dir-search');
+    const dirServerOnly = document.getElementById('dir-server-only');
+    const dirRefreshBtn = document.getElementById('dir-refresh-btn');
+    let dirLoaded = false;
+    let dirData = [];
+    let dirGrade = 'all';
+    let dirEmp = 'all';
+    const gradeMeta = {'핫':{e:'🔥',c:'hot'},'관심':{e:'🟡',c:'warm'},'일반':{e:'⚪',c:'cool'}};
+
+    function fmtRevenue(v) {
+      if (!v) return '-';
+      const eok = v / 1e8;
+      if (eok >= 10000) return (eok/10000).toFixed(1) + '조';
+      return Math.round(eok).toLocaleString() + '억';
+    }
+
+    function dirMatches(c) {
+      if (dirGrade !== 'all' && c.grade !== dirGrade) return false;
+      const e = c.employees || 0;
+      if (dirEmp === 's' && e >= 50) return false;
+      if (dirEmp === 'm' && (e < 50 || e >= 300)) return false;
+      if (dirEmp === 'l' && e < 300) return false;
+      if (dirServerOnly.checked && !(c.server_jobs > 0)) return false;
+      const q = dirSearch.value.trim().toLowerCase();
+      if (q && !((c.company + ' ' + (c.region||'')).toLowerCase().includes(q))) return false;
+      return true;
+    }
+
+    function renderDirectory() {
+      const rows = dirData.filter(dirMatches);
+      dirTbody.innerHTML = '';
+      dirEmpty.style.display = rows.length ? 'none' : '';
+      const hot = dirData.filter(c => c.grade === '핫').length;
+      dirSummary.textContent =
+        `게임사 ${dirData.length}곳 · 🔥핫 ${hot}곳 · 표시 ${rows.length}곳`;
+      rows.forEach(c => {
+        const g = gradeMeta[c.grade] || gradeMeta['일반'];
+        const tr = document.createElement('tr');
+        const net = c.net_hire > 0 ? `<span class="net-up">+${c.net_hire}</span>`
+                  : (c.net_hire < 0 ? `<span class="net-down">${c.net_hire}</span>` : '0');
+        const srv = c.server_jobs > 0 ? `<span class="srv-hot">${c.server_jobs}</span>` : '0';
+        tr.innerHTML =
+          `<td><span class="grade-badge grade-${g.c}">${g.e} ${esc(c.grade)}</span></td>
+           <td class="num"><strong>${c.score}</strong></td>
+           <td class="dir-name">${esc(c.company)}</td>
+           <td><span class="tier-badge tier-${c.tier}">${tierLabels[c.tier]||'소형'}</span></td>
+           <td class="num">${(c.employees||0).toLocaleString()}</td>
+           <td class="num">${net}</td>
+           <td class="num">${fmtRevenue(c.revenue)}</td>
+           <td class="num">${srv}</td>
+           <td>${esc(c.region||'')}</td>`;
+        dirTbody.appendChild(tr);
+      });
+    }
+
+    async function loadDirectory(force) {
+      if (dirLoaded && !force) return;
+      dirSummary.textContent = '디렉토리를 불러오는 중… (최초 1~2분 걸릴 수 있어요)';
+      dirTbody.innerHTML = '';
+      dirEmpty.style.display = 'none';
+      try {
+        const res = await fetch('/api/directory' + (force ? '?refresh=1' : ''));
+        const data = await res.json();
+        dirData = data.companies || [];
+        dirLoaded = true;
+        renderDirectory();
+      } catch (e) {
+        dirSummary.textContent = '디렉토리를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.';
+      }
+    }
+
+    dirSearch.addEventListener('input', renderDirectory);
+    dirServerOnly.addEventListener('change', renderDirectory);
+    document.querySelectorAll('#dir-grade-row .dir-chip').forEach(ch => {
+      ch.addEventListener('click', () => {
+        document.querySelectorAll('#dir-grade-row .dir-chip').forEach(c => c.classList.remove('active'));
+        ch.classList.add('active'); dirGrade = ch.dataset.grade; renderDirectory();
+      });
+    });
+    document.querySelectorAll('#dir-emp-row .dir-emp').forEach(ch => {
+      ch.addEventListener('click', () => {
+        document.querySelectorAll('#dir-emp-row .dir-emp').forEach(c => c.classList.remove('active'));
+        ch.classList.add('active'); dirEmp = ch.dataset.emp; renderDirectory();
+      });
+    });
+    dirRefreshBtn.addEventListener('click', async () => {
+      dirRefreshBtn.disabled = true;
+      dirRefreshBtn.textContent = '갱신 중…';
+      await loadDirectory(true);
+      dirRefreshBtn.disabled = false;
+      dirRefreshBtn.textContent = '디렉토리 새로고침';
     });
 
     // 채용 상세 모달

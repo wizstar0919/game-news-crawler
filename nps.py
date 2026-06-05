@@ -85,8 +85,8 @@ def classify_employees(count) -> int:
     return 3
 
 
-def lookup_employees(name: str):
-    """사업장명으로 직원수를 조회한다. (가입자수, 매칭된 사업장명) 또는 None.
+def _best_row(name: str):
+    """사업장명으로 가장 그럴듯한 국민연금 사업장 행(dict)을 찾는다. 없으면 None.
     업종(IT) 필터 + 정확 일치 우선 + 최대 가입자수 선택."""
     name = (name or "").strip()
     if not name or not NPS_API_KEY:
@@ -118,7 +118,26 @@ def lookup_employees(name: str):
     prefix = [x for x in it_rows if nk(x).startswith(brand)]
     pool = exact or prefix or it_rows
     best = max(pool, key=lambda x: x.get("가입자수") or 0)
-    cnt = best.get("가입자수")
-    if cnt is None:
+    return best if best.get("가입자수") is not None else None
+
+
+def lookup_employees(name: str):
+    """사업장명으로 직원수를 조회한다. (가입자수, 매칭된 사업장명) 또는 None."""
+    best = _best_row(name)
+    if not best:
         return None
-    return int(cnt), best.get("사업장명", "")
+    return int(best.get("가입자수")), best.get("사업장명", "")
+
+
+def lookup_stats(name: str):
+    """사업장명으로 직원수·순증채용·급여규모 등을 한 번에 조회한다.
+    {employees, net_hire, payroll, matched} 또는 None. (디렉토리 메이저 보강용)"""
+    best = _best_row(name)
+    if not best:
+        return None
+    return {
+        "employees": int(best.get("가입자수") or 0),
+        "net_hire": int(best.get("신규취득자수") or 0) - int(best.get("상실가입자수") or 0),
+        "payroll": int(best.get("당월고지금액") or 0),
+        "matched": best.get("사업장명", ""),
+    }

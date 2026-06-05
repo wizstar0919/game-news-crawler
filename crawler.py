@@ -69,6 +69,7 @@ COMPANY_TIERS = {
         "웹젠", "Webzen", "네오위즈", "Neowiz", "NHN",
         "그라비티", "Gravity", "시프트업", "Shift Up",
         "데브시스터즈", "Devsisters", "라인게임즈", "조이시티",
+        "넥써쓰", "액션스퀘어",  # 코스닥 205500, 구 액션스퀘어(2025.2 사명변경)
         # 글로벌 메이저 퍼블리셔
         "Nintendo", "닌텐도", "Sony", "소니", "Microsoft", "마이크로소프트",
         "Activision", "Blizzard", "블리자드", "EA", "Electronic Arts",
@@ -902,3 +903,75 @@ def crawl_jobs(extra_companies: list | None = None) -> list:
             except Exception as e:
                 print(f"[jobs] 회사({cid}) 공고 수집 실패: {e}")
     return jobs
+
+
+# ════════════════════════════════════════════════════════════
+#  게임사 디렉토리 — 국민연금 "게임 소프트웨어" 업종코드로 일괄 수집
+#  - 이름으로 한 곳씩 찾지 않고 업종코드로 긁어 오므로 동명회사·건설사
+#    노이즈가 없고, 비상장 소형 스튜디오까지 직원수와 함께 들어온다.
+#  - 직원수 외에 성장세(순증채용)·급여규모도 같은 행에서 얻는다.
+# ════════════════════════════════════════════════════════════
+
+# 게임 소프트웨어 개발 및 공급업 업종코드 (722000 응용SW는 너무 넓어 제외)
+GAME_INDUSTRY_CODES = [722001, 722002, 722003]
+
+
+def _region(addr: str) -> str:
+    """'서울특별시 강남구 역삼동' → '서울 강남구'. 시도 약칭 + 시군구."""
+    parts = (addr or "").split()
+    if not parts:
+        return ""
+    sido = parts[0]
+    for long, short in (("특별자치도", ""), ("특별자치시", ""), ("특별시", ""),
+                        ("광역시", ""), ("자치도", ""), ("도", "")):
+        if sido.endswith(long):
+            sido = sido[: -len(long)] if long else sido
+            break
+    sgg = parts[1] if len(parts) > 1 else ""
+    return f"{sido} {sgg}".strip()
+
+
+def crawl_game_companies() -> list:
+    """국민연금 게임 업종코드로 게임사를 일괄 수집한다.
+    반환: [{company, key, employees, net_hire, payroll, region, industry, biz_no}]
+    같은 회사(정규화 키)가 여러 사업장으로 와도 직원수 최대인 사업장 하나로 합친다.
+    국민연금 키가 없으면 빈 리스트."""
+    if not nps.has_key():
+        return []
+    by_key: dict = {}
+    for code in GAME_INDUSTRY_CODES:
+        page = 1
+        while page <= 20:  # 코드당 최대 20,000행 (안전 상한)
+            r = nps._get({"cond[사업장업종코드::EQ]": code, "perPage": 1000, "page": page})
+            try:
+                rows = r.json().get("data") or []
+            except ValueError:
+                break
+            if not rows:
+                break
+            for x in rows:
+                name = (x.get("사업장명") or "").strip()
+                if not name:
+                    continue
+                # 가입상태 탈퇴(2) 사업장은 제외
+                if x.get("사업장가입상태코드 1 등록 2 탈퇴") == 2:
+                    continue
+                emp = x.get("가입자수") or 0
+                disp, key = _canonical_company(name)
+                rec = {
+                    "company": name,
+                    "key": key,
+                    "employees": int(emp),
+                    "net_hire": int(x.get("신규취득자수") or 0) - int(x.get("상실가입자수") or 0),
+                    "payroll": int(x.get("당월고지금액") or 0),
+                    "region": _region(x.get("사업장지번상세주소") or x.get("사업장도로명상세주소") or ""),
+                    "industry": x.get("사업장업종코드명") or "",
+                    "biz_no": x.get("사업자등록번호"),
+                }
+                prev = by_key.get(key)
+                if prev is None or rec["employees"] > prev["employees"]:
+                    by_key[key] = rec
+            if len(rows) < 1000:
+                break
+            page += 1
+    return list(by_key.values())

@@ -30,6 +30,10 @@ jobs.json.tmp
 nps_cache.json
 nps_cache.json.tmp
 tier_overrides.json
+dart_corp.json
+dart_corp.json.tmp
+game_companies.json
+game_companies.json.tmp
 
 # IDE
 .vscode/

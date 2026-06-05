@@ -3,6 +3,8 @@ from crawler import fetch_all, get_stats, sort_items
 from translator import translate_to_korean
 import crawler
 import nps
+import dart
+import score
 import store
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -45,6 +47,109 @@ def get_jobs(force: bool = False) -> list:
         store.prune_jobs()
         _jobs_cache["ts"] = now
     return _enrich_tiers(crawler.aggregate_jobs(store.all_jobs()))
+
+
+# ── 게임사 디렉토리 (타겟 발굴) ────────────────────────────────
+# 큐레이트 메이저: 게임 업종코드 크롤에 안 잡히는 대형사(응용SW 코드로 등록 등).
+# 국민연금 직원수 + DART 매출로 보강해 디렉토리에 합친다.
+_MAJOR_NAMES = [
+    "넥슨", "넷마블", "엔씨소프트", "크래프톤", "카카오게임즈", "펄어비스",
+    "스마일게이트", "컴투스", "위메이드", "웹젠", "네오위즈", "그라비티",
+    "시프트업", "데브시스터즈", "넵튠", "조이시티", "넥슨게임즈", "넥써쓰",
+    "라인게임즈", "액토즈소프트", "엠게임", "한빛소프트", "미투온",
+]
+
+# 하이브리드 규모 기준 — 직원수·매출 중 "더 큰 쪽"으로 등급을 준다.
+#   대형(1): 직원 300명+ 또는 매출 300억+
+#   중형(2): 직원 100명+ 또는 매출 100억+
+#   소형(3): 그 미만
+EMP_LARGE, EMP_MID = 300, 100
+REV_LARGE, REV_MID = 300e8, 100e8  # 원 단위
+
+
+def _hybrid_tier(company: dict, override) -> int:
+    """수동 override > (큐레이트 명단·직원수·매출 중 가장 큰 등급)."""
+    if override in (1, 2, 3):
+        return override
+    tiers = []
+    kw = crawler._company_tier(company["company"])  # 큐레이트 대형/중형 명단
+    if kw in (1, 2):
+        tiers.append(kw)
+    emp = company.get("employees") or 0
+    if emp:
+        tiers.append(1 if emp >= EMP_LARGE else 2 if emp >= EMP_MID else 3)
+    rev = company.get("revenue")
+    if rev:
+        tiers.append(1 if rev >= REV_LARGE else 2 if rev >= REV_MID else 3)
+    return min(tiers) if tiers else 3  # min = 가장 큰 등급(1=대형)
+
+_dir_build_lock = __import__("threading").Lock()
+
+
+def _server_job_counts() -> dict:
+    """저장된 채용 공고를 회사(정규화 키)별 공고 수로 집계. 서버·인프라 직군 신호."""
+    counts = {}
+    for g in crawler.aggregate_jobs(store.all_jobs()):
+        counts[g["key"]] = g.get("count", 0)
+    return counts
+
+
+def build_directory() -> list:
+    """게임사 디렉토리를 새로 구성한다(무거움 → 하루 1회).
+    게임 업종코드 크롤 + 큐레이트 메이저 병합 → 매출·서버채용·타겟점수 결합."""
+    companies = crawler.crawl_game_companies()
+    seen = {c["key"] for c in companies}
+
+    # 큐레이트 메이저 중 크롤에 안 잡힌 회사를 국민연금 직원수로 보강해 추가
+    for name in _MAJOR_NAMES:
+        disp, key = crawler._canonical_company(name)
+        if key in seen:
+            continue
+        stats = nps.lookup_stats(name) if nps.has_key() else None
+        companies.append({
+            "company": name, "key": key,
+            "employees": (stats or {}).get("employees", 0),
+            "net_hire": (stats or {}).get("net_hire", 0),
+            "payroll": (stats or {}).get("payroll", 0),
+            "region": "", "industry": "게임", "biz_no": None,
+        })
+        seen.add(key)
+
+    job_counts = _server_job_counts()
+
+    # 전수 매출 조회 — 직원 적어도 매출 큰 회사(자산 경량 히트작 스튜디오)를 놓치지 않도록
+    # 모든 회사를 DART 로 조회한다. 비상장(미공시)은 즉시 None 이라 부담이 적다.
+    revenues = {}
+    if dart.has_key():
+        def work(c):
+            r = dart.lookup_revenue(c["company"])
+            return c["key"], (r[0] if r else None)
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for key, rev in ex.map(work, companies):
+                revenues[key] = rev
+
+    # 하이브리드 등급(대/중/소): 직원수·매출·명단 중 가장 큰 신호로.
+    overrides = store.get_tier_overrides()
+    for c in companies:
+        c["revenue"] = revenues.get(c["key"])
+        c["tier"] = _hybrid_tier(c, overrides.get(c["key"]))
+        c["server_jobs"] = job_counts.get(c["key"], 0)
+        score.compute(c)
+
+    companies.sort(key=lambda c: -c["score"])
+    return companies
+
+
+def get_directory(force: bool = False) -> dict:
+    """디렉토리를 캐시에서 읽거나(신선하면) 새로 빌드해 반환한다."""
+    if not force and store.directory_is_fresh():
+        return store.get_directory()
+    with _dir_build_lock:
+        if not force and store.directory_is_fresh():
+            return store.get_directory()
+        companies = build_directory()
+        store.save_directory(companies)
+    return store.get_directory()
 
 
 @app.route("/")
@@ -174,6 +279,18 @@ def api_company_tier():
     _, key = crawler._canonical_company(company)
     store.set_tier_override(key, tier if tier in (1, 2, 3) else None)
     return jsonify({"ok": True, "company": company, "tier": crawler.resolve_tier(company)})
+
+
+@app.route("/api/directory")
+def api_directory():
+    """게임사 디렉토리. 타겟점수·직원수·매출·서버채용·지역. '디렉토리' 탭에서 지연 로드."""
+    force = request.args.get("refresh") == "1"
+    data = get_directory(force=force) or {"updated": None, "companies": []}
+    return jsonify({
+        "updated": data.get("updated"),
+        "count": len(data.get("companies", [])),
+        "companies": data.get("companies", []),
+    })
 
 
 @app.route("/api/translate", methods=["POST"])

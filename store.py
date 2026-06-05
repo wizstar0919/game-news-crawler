@@ -418,6 +418,35 @@ def get_tier_overrides() -> dict:
         return _load_json_map(TIER_OVERRIDE_PATH)
 
 
+# ── 게임사 디렉토리 캐시 ──────────────────────────────────────
+# 국민연금/DART 조회가 무거워 하루 1회만 갱신하고 디스크에 캐시한다.
+DIRECTORY_PATH = os.path.join(os.path.dirname(__file__), "game_companies.json")
+DIRECTORY_TTL_HOURS = 24
+
+
+def get_directory():
+    """캐시된 게임사 디렉토리 {updated, companies} 를 반환. 없으면 None."""
+    with _lock:
+        data = _load_json_map(DIRECTORY_PATH)
+    return data or None
+
+
+def save_directory(companies: list) -> None:
+    with _lock:
+        _save_json_map(DIRECTORY_PATH, {
+            "updated": datetime.now().isoformat(),
+            "companies": companies,
+        })
+
+
+def directory_is_fresh() -> bool:
+    """캐시가 DIRECTORY_TTL_HOURS 이내면 True."""
+    data = get_directory()
+    if not data or not data.get("updated"):
+        return False
+    return _parse(data["updated"]) > datetime.now() - timedelta(hours=DIRECTORY_TTL_HOURS)
+
+
 def set_tier_override(key: str, tier) -> bool:
     """key(정규화 회사명) → 등급(1/2/3) 수동 지정. tier 가 None/0 이면 해제."""
     if not key:
