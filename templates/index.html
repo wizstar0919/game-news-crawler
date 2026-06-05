@@ -16,6 +16,7 @@
       <div class="header-meta">
         <span class="meta-item">총 <strong>{{ stats.total }}</strong>건</span>
         <span class="meta-item">업데이트 {{ stats.updated }}</span>
+        <button id="watchlist-btn" class="btn-user" title="관심 기업을 등록하고 해당 기업 뉴스만 모아보세요">📋 워치리스트</button>
         <button id="user-btn" class="btn-user" title="기기가 바뀌어도 같은 코드를 넣으면 내 북마크가 따라옵니다">👤 코드 설정</button>
         <button id="refresh-btn" class="btn-refresh">새로고침</button>
       </div>
@@ -24,6 +25,7 @@
 
   <nav class="filter-bar">
     <div class="container filter-inner">
+      <!-- Row 1: 카테고리 -->
       <div class="chip-group">
         <button class="chip active" data-filter="all">전체 <span>{{ stats.total }}</span></button>
         <button class="chip" data-filter="global">글로벌 <span>{{ stats.by_category.global }}</span></button>
@@ -31,13 +33,26 @@
         <button class="chip" data-filter="aws">AWS <span>{{ stats.by_category.aws }}</span></button>
         <button class="chip" data-filter="media">매체 <span>{{ stats.by_category.media }}</span></button>
         <button class="chip chip--bookmark" data-filter="bookmark">★ 북마크 <span id="bookmark-count">0</span></button>
+        <button class="chip chip--watchlist" data-filter="watchlist">🏢 워치리스트 <span id="watchlist-count">0</span></button>
+        <button class="chip chip--jobs" data-filter="jobs">💼 채용</button>
       </div>
-      <div class="chip-group chip-group--size">
+      <!-- Row 2: 게임사 규모 -->
+      <div class="chip-group" id="size-row">
         <span class="sort-label">게임사 규모</span>
         <button class="chip chip-size active" data-size="all">전체</button>
-        <button class="chip chip-size" data-size="1">대형 게임사 <span>{{ stats.by_tier[1] }}</span></button>
-        <button class="chip chip-size" data-size="2">중형 게임사 <span>{{ stats.by_tier[2] }}</span></button>
-        <button class="chip chip-size" data-size="3">소형 게임사 <span>{{ stats.by_tier[3] }}</span></button>
+        <button class="chip chip-size" data-size="1">대형 <span>{{ stats.by_tier[1] }}</span></button>
+        <button class="chip chip-size" data-size="2">중형 <span>{{ stats.by_tier[2] }}</span></button>
+        <button class="chip chip-size" data-size="3">소형 <span>{{ stats.by_tier[3] }}</span></button>
+      </div>
+      <!-- Row 3: 시그널 -->
+      <div class="chip-group" id="signal-row">
+        <span class="sort-label">시그널</span>
+        <button class="chip chip-signal active" data-signal="all">전체</button>
+        <button class="chip chip-signal chip-signal--invest"   data-signal="투자유치">💰 투자유치</button>
+        <button class="chip chip-signal chip-signal--newgame"  data-signal="신작출시">🆕 신작출시</button>
+        <button class="chip chip-signal chip-signal--global"   data-signal="글로벌출시">🌏 글로벌출시</button>
+        <button class="chip chip-signal chip-signal--outage"   data-signal="서버장애">🔥 서버장애</button>
+        <button class="chip chip-signal chip-signal--hiring"   data-signal="채용">💼 채용</button>
       </div>
     </div>
   </nav>
@@ -45,6 +60,8 @@
   <main class="container main-content">
     <section class="news-grid" id="news-grid">
       {% set tier_labels = {1: '대형', 2: '중형', 3: '소형'} %}
+      {% set signal_labels = {'투자유치':'💰 투자유치','신작출시':'🆕 신작출시','글로벌출시':'🌏 글로벌출시','서버장애':'🔥 서버장애','채용':'💼 채용'} %}
+      {% set signal_cls    = {'투자유치':'invest','신작출시':'newgame','글로벌출시':'global','서버장애':'outage','채용':'hiring'} %}
       {% for item in items %}
       <article class="card"
                data-category="{{ item.category }}"
@@ -56,6 +73,7 @@
                data-date="{{ item.date[:10] }}"
                data-image="{{ item.image or '' }}"
                data-bookmarked="0"
+               data-signals="{{ item.signals|join(' ') }}"
                data-category-label="{{ {'global':'글로벌','korea':'한국','aws':'AWS','media':'매체'}[item.category] }}">
         {% if item.image %}
         <div class="card-image" style="background-image: url('{{ item.image }}');"></div>
@@ -71,6 +89,13 @@
             <time class="card-date">{{ item.date[:10] }}</time>
             <span class="card-star" aria-hidden="true">★</span>
           </div>
+          {% if item.signals %}
+          <div class="card-signals">
+            {% for sig in item.signals %}
+            <span class="signal-tag signal-tag--{{ signal_cls[sig] }}">{{ signal_labels[sig] }}</span>
+            {% endfor %}
+          </div>
+          {% endif %}
           <h2 class="card-title">{{ item.title }}</h2>
           {% if item.summary %}
           <p class="card-summary">{{ item.summary }}</p>
@@ -85,6 +110,24 @@
       <p>표시할 뉴스가 없습니다. 잠시 후 다시 시도해주세요.</p>
     </div>
     {% endif %}
+
+    <!-- 채용 뷰 (탭 누를 때 지연 로드) -->
+    <section class="jobs-view" id="jobs-view" style="display:none">
+      <div class="jobs-toolbar">
+        <div class="jobs-toolbar-info">
+          <strong id="jobs-summary">채용 정보를 불러오는 중…</strong>
+          <span class="jobs-hint">게임사 서버/인프라 채용 = 지금 연락하면 좋은 신호</span>
+        </div>
+        <div class="jobs-toolbar-actions">
+          <button id="company-manage-btn" class="btn-user">🏢 회사 관리</button>
+          <button id="jobs-refresh-btn" class="btn-refresh">채용 새로고침</button>
+        </div>
+      </div>
+      <div class="news-grid" id="jobs-grid"></div>
+      <div class="empty-state" id="jobs-empty" style="display:none">
+        <p>표시할 채용 공고가 없습니다. "회사 관리"에서 관심 회사를 추가해보세요.</p>
+      </div>
+    </section>
   </main>
 
   <footer class="site-footer">
@@ -94,7 +137,7 @@
     </div>
   </footer>
 
-  <!-- Modal -->
+  <!-- 기사 모달 -->
   <div class="modal" id="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close></div>
     <div class="modal-dialog" role="dialog" aria-modal="true">
@@ -115,31 +158,129 @@
     </div>
   </div>
 
+  <!-- 워치리스트 모달 -->
+  <div class="modal" id="watchlist-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-wl-close></div>
+    <div class="modal-dialog modal-dialog--sm" role="dialog" aria-modal="true">
+      <button class="modal-close" data-wl-close aria-label="닫기">×</button>
+      <h2 class="modal-title">🏢 워치리스트 관리</h2>
+      <p class="modal-watchlist-desc">관심 기업명을 등록하면 해당 기업 뉴스만 모아볼 수 있습니다.<br>예: 넥슨, 크래프톤, Nexon</p>
+      <div class="watchlist-input-row">
+        <input id="wl-input" type="text" placeholder="기업명 입력 후 Enter" class="wl-input" />
+        <button id="wl-add-btn" class="btn-wl-add">추가</button>
+      </div>
+      <ul id="wl-list" class="wl-list"></ul>
+      <p id="wl-empty" class="wl-empty" style="display:none">아직 등록된 기업이 없습니다.</p>
+    </div>
+  </div>
+
+  <!-- 채용 상세 모달 (회사의 공고 목록) -->
+  <div class="modal" id="jobs-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-jobs-close></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true">
+      <button class="modal-close" data-jobs-close aria-label="닫기">×</button>
+      <div class="modal-meta">
+        <span class="tier-badge" id="jm-tier"></span>
+        <span class="modal-date" id="jm-sources"></span>
+      </div>
+      <h2 class="modal-title" id="jm-company"></h2>
+      <p class="modal-watchlist-desc" id="jm-count"></p>
+      <div class="jm-tier-set">
+        <span class="jm-tier-label">규모 등급</span>
+        <button class="jm-tier-btn" data-set-tier="1">대형</button>
+        <button class="jm-tier-btn" data-set-tier="2">중형</button>
+        <button class="jm-tier-btn" data-set-tier="3">소형</button>
+        <button class="jm-tier-btn jm-tier-auto" data-set-tier="0">자동</button>
+      </div>
+      <ul class="jm-list" id="jm-list"></ul>
+    </div>
+  </div>
+
+  <!-- 회사 관리 모달 (크롤 대상 회사 + 검색해서 추가) -->
+  <div class="modal" id="company-modal" aria-hidden="true">
+    <div class="modal-backdrop" data-company-close></div>
+    <div class="modal-dialog modal-dialog--sm" role="dialog" aria-modal="true">
+      <button class="modal-close" data-company-close aria-label="닫기">×</button>
+      <h2 class="modal-title">🏢 채용 크롤 회사 관리</h2>
+      <p class="modal-watchlist-desc">
+        여기 등록한 회사의 서버/인프라 채용을 추가로 수집합니다.<br>
+        게임사는 자동으로 잡히고, <strong>마케팅사·인접 기업</strong>은 검색해서 추가하세요.
+      </p>
+      <div class="watchlist-input-row">
+        <input id="company-search-input" type="text" placeholder="회사명 검색 (예: 데브시스터즈, 마케팅사)" class="wl-input" />
+        <button id="company-search-btn" class="btn-wl-add">검색</button>
+      </div>
+      <div id="company-search-results" class="company-results"></div>
+
+      <p class="company-section-label">등록된 회사</p>
+      <ul id="company-list" class="wl-list"></ul>
+      <p id="company-empty" class="wl-empty" style="display:none">등록된 회사가 없습니다.</p>
+    </div>
+  </div>
+
   <script>
-    // Filter
-    const chips = document.querySelectorAll('.chip[data-filter]');
-    const sizeChips = document.querySelectorAll('.chip-size');
-    const cards = document.querySelectorAll('.card');
+    // ── 필터 상태 ────────────────────────────────────────────
+    const chips       = document.querySelectorAll('.chip[data-filter]');
+    const sizeChips   = document.querySelectorAll('.chip-size');
+    const signalChips = document.querySelectorAll('.chip-signal');
+    const cards       = document.querySelectorAll('.card');
     let currentFilter = 'all';
-    let currentSize = 'all';
+    let currentSize   = 'all';
+    let currentSignal = 'all';
+    let userWatchlist = [];
+
     function matchesFilter(card) {
-      // 카테고리(글로벌/한국/AWS/매체/북마크)
       let catOk;
       if (currentFilter === 'all') catOk = true;
       else if (currentFilter === 'bookmark') catOk = card.dataset.bookmarked === '1';
+      else if (currentFilter === 'watchlist') {
+        const blob = (card.dataset.title + ' ' + card.dataset.summary).toLowerCase();
+        catOk = userWatchlist.length > 0 && userWatchlist.some(c => blob.includes(c.toLowerCase()));
+      }
       else catOk = card.dataset.category === currentFilter;
-      // 게임사 규모(대형/중형/소형)
+
       const sizeOk = currentSize === 'all' || card.dataset.tier === currentSize;
-      return catOk && sizeOk;
+
+      let signalOk;
+      if (currentSignal === 'all') signalOk = true;
+      else {
+        const sigs = (card.dataset.signals || '').split(' ').filter(Boolean);
+        signalOk = sigs.includes(currentSignal);
+      }
+
+      return catOk && sizeOk && signalOk;
     }
+
     function applyFilter() {
       cards.forEach(card => { card.style.display = matchesFilter(card) ? '' : 'none'; });
     }
+
+    const newsGrid = document.getElementById('news-grid');
+    const sizeRow = document.getElementById('size-row');
+    const signalRow = document.getElementById('signal-row');
+    const jobsView = document.getElementById('jobs-view');
+
+    function showNewsView() {
+      jobsView.style.display = 'none';
+      newsGrid.style.display = '';
+      sizeRow.style.display = '';
+      signalRow.style.display = '';
+    }
+    function showJobsView() {
+      newsGrid.style.display = 'none';
+      sizeRow.style.display = 'none';
+      signalRow.style.display = 'none';
+      jobsView.style.display = '';
+      loadJobs();  // 최초 1회만 실제 로드 (내부에서 캐시)
+    }
+
     chips.forEach(chip => {
       chip.addEventListener('click', () => {
         chips.forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
         currentFilter = chip.dataset.filter;
+        if (currentFilter === 'jobs') { showJobsView(); return; }
+        showNewsView();
         applyFilter();
       });
     });
@@ -151,11 +292,17 @@
         applyFilter();
       });
     });
+    signalChips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        signalChips.forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        currentSignal = chip.dataset.signal;
+        applyFilter();
+      });
+    });
 
-    // ── 사용자별 북마크 (코드 기반) ──────────────────────────
-    // 코드는 브라우저에 기억해두되, 북마크 내용 자체는 서버가 코드별로 보관한다.
-    // 따라서 다른 기기에서 같은 코드를 입력하면 북마크가 그대로 따라온다.
-    const userBtn = document.getElementById('user-btn');
+    // ── 사용자 코드 & 북마크 ─────────────────────────────────
+    const userBtn          = document.getElementById('user-btn');
     const bookmarkCountSpan = document.getElementById('bookmark-count');
     let userCode = (localStorage.getItem('gp_user_code') || '').trim();
 
@@ -189,19 +336,113 @@
         '아무 단어나 정하면 됩니다 (예: jason2026).\n' +
         '다른 기기에서도 같은 코드를 넣으면 북마크가 똑같이 보입니다.',
         userCode);
-      if (input === null) return;  // 취소
+      if (input === null) return;
       userCode = input.trim();
       if (userCode) localStorage.setItem('gp_user_code', userCode);
       else localStorage.removeItem('gp_user_code');
       refreshUserBtn();
       loadUserBookmarks();
+      loadWatchlist();
     }
 
     userBtn.addEventListener('click', setUserCode);
     refreshUserBtn();
-    loadUserBookmarks();
 
-    // Refresh
+    // ── 워치리스트 ───────────────────────────────────────────
+    const watchlistBtn      = document.getElementById('watchlist-btn');
+    const watchlistModal    = document.getElementById('watchlist-modal');
+    const wlInput           = document.getElementById('wl-input');
+    const wlAddBtn          = document.getElementById('wl-add-btn');
+    const wlList            = document.getElementById('wl-list');
+    const wlEmpty           = document.getElementById('wl-empty');
+    const watchlistCountSpan = document.getElementById('watchlist-count');
+
+    function renderWatchlist() {
+      wlList.innerHTML = '';
+      if (userWatchlist.length === 0) {
+        wlEmpty.style.display = '';
+      } else {
+        wlEmpty.style.display = 'none';
+        userWatchlist.forEach((company, idx) => {
+          const li = document.createElement('li');
+          li.className = 'wl-item';
+          li.innerHTML =
+            '<span class="wl-company">' + company + '</span>' +
+            '<button class="wl-remove" data-idx="' + idx + '" aria-label="삭제">×</button>';
+          wlList.appendChild(li);
+        });
+      }
+      watchlistCountSpan.textContent = userWatchlist.length;
+      if (currentFilter === 'watchlist') applyFilter();
+    }
+
+    async function saveWatchlist() {
+      if (!userCode) return;
+      try {
+        await fetch('/api/watchlist', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({code: userCode, companies: userWatchlist}),
+        });
+      } catch (e) {}
+    }
+
+    async function loadWatchlist() {
+      if (!userCode) { userWatchlist = []; renderWatchlist(); return; }
+      try {
+        const res = await fetch('/api/watchlist?code=' + encodeURIComponent(userCode));
+        const data = await res.json();
+        userWatchlist = Array.isArray(data.companies) ? data.companies : [];
+      } catch (e) { userWatchlist = []; }
+      renderWatchlist();
+    }
+
+    function openWatchlistModal() {
+      if (!userCode) {
+        setUserCode();
+        if (!userCode) return;
+      }
+      renderWatchlist();
+      watchlistModal.classList.add('open');
+      watchlistModal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      wlInput.focus();
+    }
+
+    function closeWatchlistModal() {
+      watchlistModal.classList.remove('open');
+      watchlistModal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+
+    watchlistBtn.addEventListener('click', openWatchlistModal);
+    watchlistModal.querySelectorAll('[data-wl-close]').forEach(el => {
+      el.addEventListener('click', closeWatchlistModal);
+    });
+
+    async function addCompany() {
+      const name = wlInput.value.trim();
+      if (!name) return;
+      if (userWatchlist.includes(name)) { wlInput.value = ''; return; }
+      userWatchlist.push(name);
+      wlInput.value = '';
+      renderWatchlist();
+      await saveWatchlist();
+    }
+
+    wlAddBtn.addEventListener('click', addCompany);
+    wlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addCompany(); });
+
+    wlList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.wl-remove');
+      if (!btn) return;
+      const idx = parseInt(btn.dataset.idx, 10);
+      userWatchlist.splice(idx, 1);
+      renderWatchlist();
+      await saveWatchlist();
+    });
+
+    // ── 새로고침 ─────────────────────────────────────────────
     const refreshBtn = document.getElementById('refresh-btn');
     refreshBtn.addEventListener('click', async () => {
       refreshBtn.disabled = true;
@@ -218,15 +459,15 @@
       }
     });
 
-    // Modal
-    const modal = document.getElementById('modal');
-    const mTitle = document.getElementById('m-title');
-    const mSummary = document.getElementById('m-summary');
-    const mBadge = document.getElementById('m-badge');
-    const mDate = document.getElementById('m-date');
-    const mLink = document.getElementById('m-link');
-    const mStatus = document.getElementById('m-status');
-    const mBookmark = document.getElementById('m-bookmark');
+    // ── 기사 모달 ────────────────────────────────────────────
+    const modal        = document.getElementById('modal');
+    const mTitle       = document.getElementById('m-title');
+    const mSummary     = document.getElementById('m-summary');
+    const mBadge       = document.getElementById('m-badge');
+    const mDate        = document.getElementById('m-date');
+    const mLink        = document.getElementById('m-link');
+    const mStatus      = document.getElementById('m-status');
+    const mBookmark    = document.getElementById('m-bookmark');
     const mBookmarkLabel = document.getElementById('m-bookmark-label');
     const bookmarkCountEl = document.getElementById('bookmark-count');
     let currentCard = null;
@@ -252,7 +493,6 @@
       modal.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
 
-      // English category → fetch Korean translation
       if (data.category === 'global' || data.category === 'aws') {
         mStatus.textContent = '한국어 번역 중…';
         fetch('/api/translate', {
@@ -291,12 +531,11 @@
       });
     });
 
-    // Bookmark toggle
     mBookmark.addEventListener('click', async () => {
       if (!currentCard) return;
-      if (!userCode) {            // 코드가 없으면 먼저 설정하도록 유도
+      if (!userCode) {
         setUserCode();
-        if (!userCode) return;    // 그래도 안 정했으면 중단
+        if (!userCode) return;
       }
       const link = currentCard.dataset.link;
       const next = currentCard.dataset.bookmarked !== '1';
@@ -325,8 +564,270 @@
       el.addEventListener('click', closeModal);
     });
     document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && modal.classList.contains('open')) closeModal();
+      if (e.key === 'Escape') {
+        if (modal.classList.contains('open')) closeModal();
+        if (watchlistModal.classList.contains('open')) closeWatchlistModal();
+      }
     });
+
+    // ── 채용 뷰 ──────────────────────────────────────────────
+    const jobsGrid    = document.getElementById('jobs-grid');
+    const jobsEmpty   = document.getElementById('jobs-empty');
+    const jobsSummary = document.getElementById('jobs-summary');
+    const jobsRefreshBtn = document.getElementById('jobs-refresh-btn');
+    const tierLabels = {1: '대형', 2: '중형', 3: '소형'};
+    let jobsLoaded = false;
+    let jobsData = [];
+
+    function esc(s) {
+      return (s || '').replace(/[&<>"']/g, c =>
+        ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    function renderJobs(companies) {
+      jobsData = companies || [];
+      jobsGrid.innerHTML = '';
+      if (!jobsData.length) {
+        jobsEmpty.style.display = '';
+        jobsSummary.textContent = '채용 중인 회사 0곳';
+        return;
+      }
+      jobsEmpty.style.display = 'none';
+      const totalJobs = jobsData.reduce((n, g) => n + g.count, 0);
+      jobsSummary.textContent = `채용 중 ${jobsData.length}곳 · 공고 ${totalJobs}건`;
+      jobsData.forEach((g, idx) => {
+        const card = document.createElement('article');
+        card.className = 'card job-card';
+        card.dataset.idx = idx;
+        const srcBadges = g.sources.map(s => `<span class="src-badge">${esc(s)}</span>`).join('');
+        const empText = (g.employees != null) ? `직원 ${g.employees.toLocaleString()}명` : '직원수 미상';
+        card.innerHTML =
+          `<div class="card-body">
+             <div class="card-meta">
+               <span class="tier-badge tier-${g.tier}">${tierLabels[g.tier] || '소형'}</span>
+               <span class="job-count">채용 ${g.count}건</span>
+             </div>
+             <h2 class="card-title">${esc(g.company)}</h2>
+             <div class="job-emp">${empText}</div>
+             <div class="job-srcs">${srcBadges}</div>
+           </div>`;
+        card.addEventListener('click', () => openJobsModal(g));
+        jobsGrid.appendChild(card);
+      });
+    }
+
+    async function loadJobs(force) {
+      if (jobsLoaded && !force) return;
+      jobsSummary.textContent = '채용 정보를 불러오는 중… (최초 10~20초 걸릴 수 있어요)';
+      jobsGrid.innerHTML = '';
+      jobsEmpty.style.display = 'none';
+      try {
+        const res = await fetch('/api/jobs' + (force ? '?refresh=1' : ''));
+        const data = await res.json();
+        jobsLoaded = true;
+        renderJobs(data.companies);
+      } catch (e) {
+        jobsSummary.textContent = '채용 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.';
+      }
+    }
+
+    jobsRefreshBtn.addEventListener('click', async () => {
+      jobsRefreshBtn.disabled = true;
+      jobsRefreshBtn.textContent = '갱신 중…';
+      await loadJobs(true);
+      jobsRefreshBtn.disabled = false;
+      jobsRefreshBtn.textContent = '채용 새로고침';
+    });
+
+    // 채용 상세 모달
+    const jobsModal = document.getElementById('jobs-modal');
+    let currentJob = null;
+    const tierBtns = jobsModal.querySelectorAll('.jm-tier-btn');
+
+    function highlightTier(tier) {
+      tierBtns.forEach(b => b.classList.toggle('active', b.dataset.setTier === String(tier)));
+    }
+    function openJobsModal(g) {
+      currentJob = g;
+      document.getElementById('jm-company').textContent = g.company;
+      const tierEl = document.getElementById('jm-tier');
+      tierEl.textContent = tierLabels[g.tier] || '소형';
+      tierEl.className = 'tier-badge tier-' + g.tier;
+      document.getElementById('jm-sources').textContent = '출처: ' + g.sources.join(' · ');
+      const empText = (g.employees != null) ? ` · 직원 ${g.employees.toLocaleString()}명(국민연금 기준)` : ' · 직원수 미상';
+      document.getElementById('jm-count').textContent = `관련 채용 ${g.count}건${empText}`;
+      highlightTier(g.tier);
+      const list = document.getElementById('jm-list');
+      list.innerHTML = '';
+      g.jobs.forEach(j => {
+        const li = document.createElement('li');
+        li.className = 'jm-item';
+        const skills = (j.skills || []).slice(0, 5).map(s => `<span class="skill-chip">${esc(s)}</span>`).join('');
+        li.innerHTML =
+          `<a href="${esc(j.link)}" target="_blank" rel="noopener noreferrer" class="jm-title">${esc(j.title)} ↗</a>
+           <div class="jm-sub">${esc(j.source)}${j.address ? ' · ' + esc(j.address) : ''}</div>
+           ${skills ? `<div class="jm-skills">${skills}</div>` : ''}`;
+        list.appendChild(li);
+      });
+      jobsModal.classList.add('open');
+      jobsModal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeJobsModal() {
+      jobsModal.classList.remove('open');
+      jobsModal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+    }
+    jobsModal.querySelectorAll('[data-jobs-close]').forEach(el => el.addEventListener('click', closeJobsModal));
+
+    // 규모 등급 수동 지정 (override). 0=자동으로 복귀
+    tierBtns.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!currentJob) return;
+        const setTier = parseInt(btn.dataset.setTier, 10);
+        tierBtns.forEach(b => b.disabled = true);
+        try {
+          const res = await fetch('/api/company-tier', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({company: currentJob.company, tier: setTier}),
+          });
+          const data = await res.json();
+          const newTier = data.tier;
+          currentJob.tier = newTier;
+          highlightTier(newTier);
+          // 모달 헤더 뱃지 + 그리드 카드 갱신
+          const tierEl = document.getElementById('jm-tier');
+          tierEl.textContent = tierLabels[newTier] || '소형';
+          tierEl.className = 'tier-badge tier-' + newTier;
+          const card = jobsGrid.querySelector(`.job-card[data-idx="${jobsData.indexOf(currentJob)}"]`);
+          if (card) {
+            const b = card.querySelector('.tier-badge');
+            if (b) { b.textContent = tierLabels[newTier] || '소형'; b.className = 'tier-badge tier-' + newTier; }
+          }
+        } catch (e) {}
+        finally { tierBtns.forEach(b => b.disabled = false); }
+      });
+    });
+
+    // ── 회사 관리 모달 (검색해서 추가) ───────────────────────────
+    const companyModal   = document.getElementById('company-modal');
+    const companyMgmtBtn  = document.getElementById('company-manage-btn');
+    const companySearchInput = document.getElementById('company-search-input');
+    const companySearchBtn   = document.getElementById('company-search-btn');
+    const companyResults  = document.getElementById('company-search-results');
+    const companyList     = document.getElementById('company-list');
+    const companyEmpty    = document.getElementById('company-empty');
+
+    function renderCompanyList(companies) {
+      companyList.innerHTML = '';
+      if (!companies || !companies.length) { companyEmpty.style.display = ''; return; }
+      companyEmpty.style.display = 'none';
+      companies.forEach(c => {
+        const li = document.createElement('li');
+        li.className = 'wl-item';
+        li.innerHTML =
+          `<span class="wl-company">${esc(c.name)}</span>
+           <button class="wl-remove" data-name="${esc(c.name)}" aria-label="삭제">×</button>`;
+        companyList.appendChild(li);
+      });
+    }
+
+    async function loadCompanies() {
+      try {
+        const res = await fetch('/api/companies');
+        const data = await res.json();
+        renderCompanyList(data.companies);
+      } catch (e) {}
+    }
+
+    function openCompanyModal() {
+      companyResults.innerHTML = '';
+      companySearchInput.value = '';
+      loadCompanies();
+      companyModal.classList.add('open');
+      companyModal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeCompanyModal() {
+      companyModal.classList.remove('open');
+      companyModal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+      // 회사 목록이 바뀌었을 수 있으니 채용 데이터 갱신 유도
+      jobsLoaded = false;
+    }
+    companyMgmtBtn.addEventListener('click', openCompanyModal);
+    companyModal.querySelectorAll('[data-company-close]').forEach(el => el.addEventListener('click', closeCompanyModal));
+
+    async function searchCompanies() {
+      const q = companySearchInput.value.trim();
+      if (!q) return;
+      companyResults.innerHTML = '<p class="company-searching">검색 중…</p>';
+      try {
+        const res = await fetch('/api/company-search?q=' + encodeURIComponent(q));
+        const data = await res.json();
+        const results = data.results || [];
+        if (!results.length) { companyResults.innerHTML = '<p class="company-searching">검색 결과가 없습니다.</p>'; return; }
+        companyResults.innerHTML = '';
+        results.forEach(r => {
+          const row = document.createElement('div');
+          row.className = 'company-result';
+          row.innerHTML =
+            `<div class="cr-info">
+               <span class="cr-name">${esc(r.name)}</span>
+               ${r.industry ? `<span class="cr-industry">${esc(r.industry)}</span>` : ''}
+             </div>
+             <button class="cr-add ${r.registered ? 'added' : ''}" data-name="${esc(r.name)}" data-id="${r.id || ''}" ${r.registered ? 'disabled' : ''}>
+               ${r.registered ? '등록됨' : '+추가'}
+             </button>`;
+          companyResults.appendChild(row);
+        });
+      } catch (e) {
+        companyResults.innerHTML = '<p class="company-searching">검색 실패. 잠시 후 다시 시도해주세요.</p>';
+      }
+    }
+    companySearchBtn.addEventListener('click', searchCompanies);
+    companySearchInput.addEventListener('keydown', e => { if (e.key === 'Enter') searchCompanies(); });
+
+    // 검색 결과에서 바로 추가
+    companyResults.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.cr-add');
+      if (!btn || btn.disabled) return;
+      btn.disabled = true; btn.textContent = '추가 중…';
+      try {
+        const res = await fetch('/api/companies', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: btn.dataset.name, company_id: btn.dataset.id || null}),
+        });
+        const data = await res.json();
+        btn.textContent = '등록됨'; btn.classList.add('added');
+        renderCompanyList(data.companies);
+      } catch (e2) { btn.disabled = false; btn.textContent = '+추가'; }
+    });
+
+    // 등록 회사 삭제
+    companyList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.wl-remove');
+      if (!btn) return;
+      try {
+        const res = await fetch('/api/companies/remove', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: btn.dataset.name}),
+        });
+        const data = await res.json();
+        renderCompanyList(data.companies);
+      } catch (e2) {}
+    });
+
+    // Esc 로 채용/회사 모달도 닫기
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      if (jobsModal.classList.contains('open')) closeJobsModal();
+      if (companyModal.classList.contains('open')) closeCompanyModal();
+    });
+
+    // ── 초기 로드 ────────────────────────────────────────────
+    loadUserBookmarks();
+    loadWatchlist();
   </script>
 </body>
 </html>

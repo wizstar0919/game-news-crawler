@@ -21,6 +21,15 @@ _test_articles.json
 # 사용자별 북마크 — 코드(사용자 식별자)와 개인 관심 기사가 들어가므로 커밋하지 않는다
 user_bookmarks.json
 user_bookmarks.json.tmp
+user_watchlist.json
+
+# API 키 / 채용·직원수 캐시 (개인 키·파생 데이터라 커밋하지 않음)
+.env
+jobs.json
+jobs.json.tmp
+nps_cache.json
+nps_cache.json.tmp
+tier_overrides.json
 
 # IDE
 .vscode/

@@ -410,3 +410,214 @@ body {
   .header-meta { width: 100%; justify-content: space-between; }
   .news-grid { grid-template-columns: 1fr; }
 }
+
+/* ── 필터바 3행 레이아웃 ───────────────────────────────────── */
+.filter-inner {
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  gap: 10px !important;
+  overflow-x: visible !important;
+}
+
+/* ── 시그널 태그 (카드 위) ────────────────────────────────── */
+.card-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.signal-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.signal-tag--invest  { background: #f0fdf4; color: #16a34a; }
+.signal-tag--newgame { background: var(--accent-soft); color: var(--accent); }
+.signal-tag--global  { background: #ecfeff; color: #0891b2; }
+.signal-tag--outage  { background: var(--korea-soft); color: var(--korea); }
+.signal-tag--hiring  { background: var(--media-soft); color: var(--media); }
+
+/* ── 시그널 필터 칩 ──────────────────────────────────────── */
+.chip-signal.active                 { background: #374151; border-color: #374151; color: white; }
+.chip-signal--invest.active         { background: #16a34a; border-color: #16a34a; }
+.chip-signal--newgame.active        { background: var(--accent); border-color: var(--accent); }
+.chip-signal--global.active         { background: #0891b2; border-color: #0891b2; }
+.chip-signal--outage.active         { background: var(--korea); border-color: var(--korea); }
+.chip-signal--hiring.active         { background: var(--media); border-color: var(--media); }
+.chip-signal.active span            { background: rgba(255,255,255,0.2); color: white; }
+
+/* ── 워치리스트 칩 ───────────────────────────────────────── */
+.chip--watchlist.active             { background: #0891b2; border-color: #0891b2; color: white; }
+.chip--watchlist.active span        { background: rgba(255,255,255,0.2); color: white; }
+
+/* ── 워치리스트 모달 ─────────────────────────────────────── */
+.modal-dialog--sm                   { max-width: 440px; }
+.modal-watchlist-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 18px;
+}
+.watchlist-input-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.wl-input {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.wl-input:focus { border-color: var(--accent); }
+.btn-wl-add {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.btn-wl-add:hover { opacity: 0.85; }
+.wl-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.wl-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.wl-company { font-size: 14px; font-weight: 500; }
+.wl-remove {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.wl-remove:hover { background: var(--korea-soft); color: var(--korea); }
+.wl-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 20px 0;
+}
+
+/* ── 채용 탭 ─────────────────────────────────────────────── */
+.chip--jobs.active { background: #0f766e; border-color: #0f766e; color: white; }
+
+.jobs-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.jobs-toolbar-info { display: flex; flex-direction: column; gap: 2px; }
+.jobs-toolbar-info strong { font-size: 15px; }
+.jobs-hint { font-size: 12px; color: var(--text-muted); }
+.jobs-toolbar-actions { display: flex; gap: 8px; }
+
+/* 채용 회사 카드 */
+.job-card { cursor: pointer; }
+.job-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f766e;
+  background: #f0fdfa;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.job-emp { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+.job-srcs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.src-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+/* 채용 상세 모달 — 규모 등급 수동 지정 */
+.jm-tier-set {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 4px 0 18px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.jm-tier-label { font-size: 12px; color: var(--text-muted); margin-right: 4px; }
+.jm-tier-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 12px; font-size: 12px; font-weight: 600; color: var(--text-muted);
+  cursor: pointer; transition: all 0.15s;
+}
+.jm-tier-btn:hover { border-color: var(--text-muted); color: var(--text); }
+.jm-tier-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+.jm-tier-auto { margin-left: auto; }
+.jm-tier-btn:disabled { opacity: 0.5; cursor: wait; }
+
+/* 채용 상세 모달 — 공고 목록 */
+.jm-list { list-style: none; display: flex; flex-direction: column; gap: 12px; margin-top: 8px; }
+.jm-item { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.jm-title {
+  font-size: 14px; font-weight: 600; color: var(--accent);
+  text-decoration: none; line-height: 1.4;
+}
+.jm-title:hover { text-decoration: underline; }
+.jm-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.jm-skills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.skill-chip {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent);
+}
+
+/* ── 회사 관리 모달 ──────────────────────────────────────── */
+.company-section-label {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  margin: 18px 0 8px;
+}
+.company-results { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.company-result {
+  display: flex; align-items: center; justify-content: space-between;
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+}
+.cr-info { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cr-name { font-size: 14px; font-weight: 500; }
+.cr-industry { font-size: 11px; color: var(--text-muted); }
+.cr-add {
+  background: var(--accent); color: white; border: none;
+  border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: opacity 0.15s;
+}
+.cr-add:hover { opacity: 0.85; }
+.cr-add.added, .cr-add:disabled {
+  background: var(--bg); color: var(--text-muted);
+  border: 1px solid var(--border); cursor: default;
+}
+.company-searching { font-size: 13px; color: var(--text-muted); padding: 10px 0; text-align: center; }

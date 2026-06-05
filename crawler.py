@@ -5,8 +5,10 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import re
+import unicodedata
 
 import store
+import nps
 
 SOURCES = {
     "global": [
@@ -51,30 +53,83 @@ ESPORTS_KEYWORDS = [
     "발로란트", "Valorant", "오버워치 리그", "Dota 2", "도타 2",
 ]
 
+# 게임사 규모 분류 — "회사 규모(매출·상장)" 기준.
+#   대형(1): 주요/상장 퍼블리셔(국내 상장 중견사 포함) + 글로벌 메이저
+#   중형(2): 검증된 중소 상장사·스튜디오
+#   소형(3): 위 목록에 없는 나머지(인디·신생·비상장 소규모)
+# 회사를 올리거나 내리려면 이 딕셔너리에서 이름만 옮기면 된다.
 COMPANY_TIERS = {
     1: [
+        # 국내 주요/상장 퍼블리셔 (중견 상장사 포함해 상향)
         "넥슨", "Nexon", "엔씨소프트", "엔씨", "NCSOFT", "NCSoft", "NC ",
         "크래프톤", "Krafton", "넷마블", "Netmarble",
-        "카카오게임즈", "Kakao Games", "펄어비스", "Pearl Abyss",
-        "스마일게이트", "Smilegate",
+        "카카오게임즈", "Kakao Games", "카카오", "Kakao",
+        "펄어비스", "Pearl Abyss", "스마일게이트", "Smilegate",
+        "컴투스", "Com2uS", "위메이드", "Wemade",
+        "웹젠", "Webzen", "네오위즈", "Neowiz", "NHN",
+        "그라비티", "Gravity", "시프트업", "Shift Up",
+        "데브시스터즈", "Devsisters", "라인게임즈", "조이시티",
+        # 글로벌 메이저 퍼블리셔
         "Nintendo", "닌텐도", "Sony", "소니", "Microsoft", "마이크로소프트",
         "Activision", "Blizzard", "블리자드", "EA", "Electronic Arts",
         "Ubisoft", "유비소프트", "Take-Two", "Rockstar",
         "Tencent", "텐센트", "Epic Games", "에픽게임즈",
         "Valve", "밸브", "Steam", "스팀", "Riot", "라이엇",
-    ],
-    2: [
-        "컴투스", "Com2uS", "위메이드", "Wemade",
-        "데브시스터즈", "Devsisters", "웹젠", "Webzen",
-        "네오위즈", "Neowiz", "NHN", "그라비티", "Gravity",
-        "라인게임즈", "시프트업", "Shift Up",
         "miHoYo", "미호요", "HoYoverse", "호요버스",
         "Capcom", "캡콤", "Square Enix", "스퀘어에닉스",
         "Bandai Namco", "반다이남코", "Konami", "코나미",
         "CD Projekt", "Bethesda", "베데스다", "2K",
-        "카카오", "Kakao",
+    ],
+    2: [
+        # 검증된 중소 상장사·스튜디오 (필요 시 자유롭게 조정)
+        "액토즈소프트", "엠게임", "한빛소프트", "넵튠", "Neptune",
+        "베이글코드", "Bagelcode", "슈퍼진",
     ],
 }
+
+
+SIGNAL_KEYWORDS = {
+    "투자유치": [
+        "투자유치", "투자 유치", "펀딩", "시리즈 A", "시리즈A",
+        "시리즈 B", "시리즈B", "시리즈 C", "시리즈C",
+        "Series A", "Series B", "funding", "raised $", "investment round",
+    ],
+    "신작출시": [
+        "신작 출시", "신작출시", "정식 출시", "정식출시", "게임 출시",
+        "사전 예약", "사전예약", "얼리 액세스", "신규 게임",
+        "game launch", "game release", "now available", "early access",
+        "officially launches", "new game",
+    ],
+    "글로벌출시": [
+        "글로벌 출시", "글로벌출시", "글로벌 런칭", "글로벌 서비스",
+        "해외 출시", "해외출시", "글로벌 진출", "해외 진출",
+        "global launch", "worldwide launch", "global release", "launches globally",
+    ],
+    "서버장애": [
+        "서버 장애", "서버장애", "접속 장애", "서버 오류",
+        "긴급 점검", "긴급점검", "서버 다운",
+        "server outage", "downtime", "server down",
+    ],
+    "채용": [
+        "개발자 채용", "엔지니어 채용", "백엔드 채용", "서버 채용",
+        "백엔드 개발자", "채용 공고",
+        "is hiring", "we're hiring", "job opening", "backend engineer",
+        "server engineer",
+    ],
+}
+
+
+def _signal_tags(text: str) -> list:
+    if not text:
+        return []
+    tags = []
+    low = text.lower()
+    for tag, keywords in SIGNAL_KEYWORDS.items():
+        for kw in keywords:
+            if kw.lower() in low:
+                tags.append(tag)
+                break
+    return tags
 
 
 def _company_tier(text: str) -> int:
@@ -316,6 +371,7 @@ def fetch_one(source: dict) -> list:
                 "source": source["name"],
                 "category": source["category"],
                 "tier": _company_tier(blob),
+                "signals": _signal_tags(blob),
             })
     except Exception as e:
         print(f"[crawler] {source['name']} failed: {e}")
@@ -381,6 +437,7 @@ def fetch_html_outlet(outlet: dict) -> list:
                 "source": outlet["name"],
                 "category": "media",
                 "tier": _company_tier(blob),
+                "signals": _signal_tags(blob),
             })
             if len(items) >= 20:
                 break
@@ -581,3 +638,267 @@ def _iso_to_ts(iso: str) -> float:
         return datetime.fromisoformat(iso).timestamp()
     except Exception:
         return 0.0
+
+
+# ════════════════════════════════════════════════════════════
+#  채용(Jobs) 크롤링
+#  "어느 게임(관련) 회사가 지금 서버/인프라 사람을 뽑는가" = AWS 영업 신호.
+#  뉴스와 데이터 성격이 달라(회사 단위 집계) 별도 파이프라인으로 둔다.
+#
+#  소스 전략:
+#   - 원티드 게임 직군 카테고리(960=게임 서버 개발자) → 모르는 게임 스튜디오까지 자동 포착
+#   - 등록(시드+사용자추가) 회사 → 회사 id 로 콕 조회(인접 기업·마케팅사 등 보강)
+#  공고엔 작성일이 없어 store 의 first_seen(수집 시각)을 날짜로 쓴다.
+# ════════════════════════════════════════════════════════════
+
+WANTED_NAV = "https://www.wanted.co.kr/api/chaos/navigation/v1/results"
+WANTED_SEARCH = "https://www.wanted.co.kr/api/chaos/search/v1/results"
+WANTED_COMPANY_JOBS = "https://www.wanted.co.kr/api/v4/companies/{cid}/jobs"
+WANTED_JOB_URL = "https://www.wanted.co.kr/wd/{jid}"
+WANTED_COMPANY_URL = "https://www.wanted.co.kr/company/{cid}"
+
+# 원티드 게임 직군 카테고리 id (959 게임 제작 / 960 게임 서버 개발자 / 961 클라)
+WANTED_GAME_SERVER_JOB_ID = 960
+
+# 등록 회사 공고 중 AWS 영업 관련 직무만 남길 키워드
+JOB_ROLE_KEYWORDS = [
+    "서버", "백엔드", "back-end", "backend", "인프라", "infra",
+    "devops", "데브옵스", "sre", "클라우드", "cloud",
+    "플랫폼", "platform", "시스템", "system",
+]
+
+
+_ssl_warned = False
+
+
+def _jobs_get(url: str, params: dict | None = None):
+    """채용 API 요청. 사내망 인증서 문제(SSL) 시 검증을 끄고 재시도한다."""
+    global _ssl_warned
+    try:
+        return requests.get(url, headers=HEADERS, params=params, timeout=12)
+    except requests.exceptions.SSLError:
+        import urllib3
+        urllib3.disable_warnings()
+        if not _ssl_warned:
+            print("[jobs] SSL 검증 실패 → verify=False 재시도 (사내망 인증서 추정)")
+            _ssl_warned = True
+        return requests.get(url, headers=HEADERS, params=params, timeout=12, verify=False)
+
+
+def _skill_list(tags) -> list:
+    out = []
+    for t in tags or []:
+        if isinstance(t, dict):
+            out.append(t.get("title") or t.get("name") or "")
+        elif isinstance(t, str):
+            out.append(t)
+    return [s for s in out if s]
+
+
+def _addr_str(addr) -> str:
+    if isinstance(addr, dict):
+        return addr.get("location") or addr.get("full_location") or ""
+    return addr or ""
+
+
+def _is_relevant_role(title: str) -> bool:
+    low = (title or "").lower()
+    return any(k in low for k in JOB_ROLE_KEYWORDS)
+
+
+def _wanted_job(it: dict, source: str = "원티드") -> dict:
+    jid = it.get("id")
+    comp = it.get("company") or {}
+    return {
+        "job_id": jid,
+        "title": (it.get("position") or "").strip(),
+        "company_raw": (comp.get("name") or "").strip(),
+        "company_id": comp.get("id"),
+        "link": WANTED_JOB_URL.format(jid=jid) if jid else "",
+        "skills": _skill_list(it.get("skill_tags")),
+        "address": _addr_str(it.get("address")),
+        "annual_from": it.get("annual_from"),
+        "annual_to": it.get("annual_to"),
+        "source": source,
+    }
+
+
+def _fetch_wanted_game_jobs(max_items: int = 100) -> list:
+    """원티드 게임 서버 개발자 카테고리 공고를 페이지네이션으로 수집."""
+    items, offset = [], 0
+    while offset < max_items:
+        r = _jobs_get(WANTED_NAV, {
+            "job_ids": WANTED_GAME_SERVER_JOB_ID,
+            "country": "kr", "job_sort": "job.latest_order",
+            "years": -1, "locations": "all", "limit": 20, "offset": offset,
+        })
+        try:
+            data = r.json().get("data") or []
+        except ValueError:
+            data = []
+        if not data:
+            break
+        items += [_wanted_job(it) for it in data]
+        if len(data) < 20:
+            break
+        offset += 20
+    return items
+
+
+def _fetch_company_jobs(company_id) -> list:
+    """등록 회사의 공고 중 영업 관련 직무만 가져온다."""
+    r = _jobs_get(WANTED_COMPANY_JOBS.format(cid=company_id))
+    try:
+        data = r.json().get("data") or []  # 공고 없으면 data=null 로 옴
+    except ValueError:
+        data = []
+    out = []
+    for it in data:
+        job = _wanted_job(it)
+        if not job["link"]:  # company jobs 응답엔 id 가 없을 수 있음 → 회사 페이지로 대체
+            job["link"] = WANTED_COMPANY_URL.format(cid=company_id)
+        if _is_relevant_role(job["title"]):
+            out.append(job)
+    return out
+
+
+def search_companies(query: str, limit: int = 10) -> list:
+    """원티드 회사 검색 (회사 관리 UI의 '검색해서 추가'용)."""
+    if not query.strip():
+        return []
+    r = _jobs_get(WANTED_SEARCH, {"query": query, "country": "kr", "limit": limit, "offset": 0})
+    comps = (r.json().get("companies") or {}).get("data", [])
+    return [{
+        "id": c.get("id"),
+        "name": c.get("name", ""),
+        "industry": c.get("industry_name") or c.get("industry") or "",
+    } for c in comps if c.get("name")]
+
+
+# ── 회사명 정규화 + 별칭사전 (회사 단위 집계의 핵심) ─────────────
+_LEGAL_RE = re.compile(
+    r"(주식회사|유한회사|㈜|\(주\)|\(유\)|\(재\)|Inc\.?|Corp\.?|Co\.?,?\s*Ltd\.?|Ltd\.?|LLC)", re.I)
+_PAREN_RE = re.compile(r"[\(（]([^)）]*)[\)）]")
+
+# 같은 회사의 한글/영문/약칭 → 대표명. 알고리즘으론 못 잇는 한↔영을 사전으로 보강.
+# (자회사는 일부러 분리 유지: 넥슨/넥슨게임즈/네오플은 각각 다른 영업 계정)
+COMPANY_ALIASES = {
+    "넥슨": ["nexon", "넥슨코리아"],
+    "엔씨소프트": ["엔씨", "ncsoft"],
+    "크래프톤": ["krafton"],
+    "넷마블": ["netmarble"],
+    "카카오게임즈": ["kakaogames"],
+    "펄어비스": ["pearlabyss"],
+    "스마일게이트": ["smilegate"],
+    "컴투스": ["com2us"],
+    "위메이드": ["wemade"],
+    "데브시스터즈": ["devsisters"],
+    "웹젠": ["webzen"],
+    "네오위즈": ["neowiz"],
+    "그라비티": ["gravity"],
+    "시프트업": ["shiftup"],
+    "넵튠": ["neptune"],
+    "라인게임즈": ["linegames"],
+}
+
+
+def _norm_key(name: str):
+    """회사명 비교용 정규화 키와 부수 별칭(괄호 안 영문 등)을 반환."""
+    if not name:
+        return "", []
+    s = unicodedata.normalize("NFKC", name).strip()
+    aliases = [a.strip() for a in _PAREN_RE.findall(s) if a.strip()]
+    s = _PAREN_RE.sub(" ", s)
+    s = _LEGAL_RE.sub(" ", s)
+    s = re.sub(r"\s+", "", s)
+    return s.casefold(), [a.casefold() for a in aliases]
+
+
+# 별칭(정규화) → 대표명 역인덱스
+_ALIAS_TO_CANON: dict = {}
+for _canon, _variants in COMPANY_ALIASES.items():
+    _ck, _ = _norm_key(_canon)
+    _ALIAS_TO_CANON[_ck] = _canon
+    for _v in _variants:
+        _vk, _ = _norm_key(_v)
+        _ALIAS_TO_CANON[_vk] = _canon
+
+
+def _canonical_company(name: str):
+    """(표시용 대표명, 집계 키)를 반환. 사전에 없으면 합치지 않는다(오합치 방지)."""
+    key, aliases = _norm_key(name)
+    for k in [key] + aliases:
+        if k in _ALIAS_TO_CANON:
+            canon = _ALIAS_TO_CANON[k]
+            ck, _ = _norm_key(canon)
+            return canon, ck
+    return name.strip(), key
+
+
+def resolve_tier(company_name: str) -> int:
+    """회사 등급 결정. 우선순위: 수동 override > 큐레이트 키워드 목록 > 국민연금 직원수 > 소형.
+    유명 회사는 키워드 목록이, 무명 스튜디오는 국민연금 직원수가 분류한다."""
+    disp, key = _canonical_company(company_name)
+    overrides = store.get_tier_overrides()
+    if key in overrides and overrides[key] in (1, 2, 3):
+        return overrides[key]
+    kw = _company_tier(disp)
+    if kw in (1, 2):  # 큐레이트 목록에 대형/중형으로 있으면 그걸 신뢰
+        return kw
+    cache = store.get_nps_cache()
+    emp = cache.get(key, {}).get("employees")
+    if emp is not None:
+        return nps.classify_employees(emp)
+    return 3
+
+
+def aggregate_jobs(jobs: list) -> list:
+    """공고 리스트를 회사 단위로 묶는다. 같은 회사가 여러 소스/공고로 와도 한 묶음.
+    (등급/직원수는 app 의 enrich 단계에서 채운다 — 네트워크 조회가 필요하므로)"""
+    groups: dict = {}
+    for j in jobs:
+        disp, key = _canonical_company(j.get("company_raw", ""))
+        if not key:
+            continue
+        g = groups.get(key)
+        if not g:
+            g = groups[key] = {"company": disp, "key": key,
+                               "tier": _company_tier(disp), "employees": None,
+                               "sources": set(), "jobs": []}
+        g["sources"].add(j["source"])
+        link = j.get("link", "")
+        if not (link and any(x.get("link") == link for x in g["jobs"])):
+            g["jobs"].append(j)
+    out = []
+    for g in groups.values():
+        g["sources"] = sorted(g["sources"])
+        g["count"] = len(g["jobs"])
+        out.append(g)
+    out.sort(key=lambda g: (g["tier"], -g["count"]))
+    return out
+
+
+def crawl_jobs(extra_companies: list | None = None) -> list:
+    """게임 직군 공고 + 등록 회사 공고를 모아 '원본 공고 리스트'를 반환한다.
+    (저장소가 개별 공고를 보존·정리할 수 있도록 집계 전 단계를 돌려준다.
+     화면 표시용 회사 단위 집계는 aggregate_jobs 로 읽을 때 수행)"""
+    jobs: list = []
+    try:
+        jobs += _fetch_wanted_game_jobs()
+    except Exception as e:
+        print(f"[jobs] 원티드 게임 직군 수집 실패: {e}")
+
+    for c in (extra_companies or []):
+        cid = c.get("company_id") or c.get("id")
+        if not cid and c.get("name"):  # 이름만 등록된 경우 검색으로 id 해소
+            try:
+                found = search_companies(c["name"], 1)
+                cid = found[0]["id"] if found else None
+            except Exception:
+                cid = None
+        if cid:
+            try:
+                jobs += _fetch_company_jobs(cid)
+            except Exception as e:
+                print(f"[jobs] 회사({cid}) 공고 수집 실패: {e}")
+    return jobs
